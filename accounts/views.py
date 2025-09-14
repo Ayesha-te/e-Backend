@@ -1,7 +1,7 @@
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
-from .serializers import SignupSerializer
+from .serializers import SignupSerializer, VendorSerializer
 
 # JWT token customization
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -45,3 +45,10 @@ class MeView(generics.RetrieveAPIView):
 
     def get_object(self):
         return self.request.user
+
+class VendorListView(generics.ListAPIView):
+    serializer_class = VendorSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        return User.objects.filter(role='vendor').only('id', 'username', 'company_name')

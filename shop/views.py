@@ -20,6 +20,13 @@ class ProductViewSet(viewsets.ModelViewSet):
             return [permissions.IsAuthenticated(), IsVendor()]
         return [permissions.AllowAny()]
 
+    def get_queryset(self):
+        qs = super().get_queryset()
+        vendor_id = self.request.query_params.get('vendor')
+        if vendor_id:
+            qs = qs.filter(vendor_id=vendor_id)
+        return qs
+
     def perform_create(self, serializer):
         serializer.save(vendor=self.request.user)
 
