@@ -27,6 +27,8 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
                 'username': self.user.username,
                 'email': self.user.email,
                 'role': getattr(self.user, 'role', 'customer'),
+                'company_name': getattr(self.user, 'company_name', ''),
+                'phone': getattr(self.user, 'phone', ''),
             }
         })
         return data
