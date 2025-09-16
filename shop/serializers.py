@@ -1,13 +1,50 @@
 from rest_framework import serializers
+from django.core.files.base import ContentFile
+import base64
+import uuid
+import imghdr
+
 from .models import Product, Order, OrderItem
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
+
+class HybridImageField(serializers.ImageField):
+    """Accept either base64 string or a standard uploaded file."""
+
+    def to_internal_value(self, data):
+        # Base64 string path
+        if isinstance(data, str):
+            base64_str = data
+            if "data:" in data and ";base64," in data:
+                try:
+                    _, base64_str = data.split(";base64,", 1)
+                except ValueError:
+                    self.fail("invalid_image")
+
+            try:
+                decoded_file = base64.b64decode(base64_str)
+            except Exception:
+                self.fail("invalid_image")
+
+            # Guess file extension from header
+            ext = imghdr.what(None, h=decoded_file) or "jpg"
+            if ext == "jpeg":
+                ext = "jpg"
+            file_name = f"{uuid.uuid4().hex[:12]}.{ext}"
+            data = ContentFile(decoded_file, name=file_name)
+            return super().to_internal_value(data)
+
+        # Default behavior for uploaded files (InMemoryUploadedFile/TemporaryUploadedFile)
+        return super().to_internal_value(data)
+
+
 class ProductSerializer(serializers.ModelSerializer):
     vendor_name = serializers.CharField(source='vendor.username', read_only=True)
     name = serializers.CharField(required=False)  # Allow 'name' as input
     image_url = serializers.SerializerMethodField()  # Computed field for image URL
+    image = HybridImageField(required=False, allow_null=True)
 
     class Meta:
         model = Product
@@ -18,8 +55,8 @@ class ProductSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'title': {'required': False},
             'name': {'write_only': True},
-            "image": {"required": False, "allow_null": True}
-        }  # Make title not required, name write-only
+            'image': {'required': False, 'allow_null': True},
+        }
 
     def get_image_url(self, obj):
         if obj.image:
@@ -41,12 +78,14 @@ class ProductSerializer(serializers.ModelSerializer):
             validated_data['title'] = validated_data.pop('name')
         return super().create(validated_data)
 
+
 class OrderItemSerializer(serializers.ModelSerializer):
     product_title = serializers.CharField(source='product.title', read_only=True)
 
     class Meta:
         model = OrderItem
         fields = ['id', 'product', 'product_title', 'quantity', 'price']
+
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True)
