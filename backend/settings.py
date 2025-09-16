@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 from datetime import timedelta
 from urllib.parse import urlparse
+import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -55,27 +56,9 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'backend.wsgi.application'
 
-DATABASE_URL = os.environ.get('DATABASE_URL')
-if DATABASE_URL:
-    url = urlparse(DATABASE_URL)
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': url.path.lstrip('/'),
-            'USER': url.username,
-            'PASSWORD': url.password,
-            'HOST': url.hostname,
-            'PORT': url.port or 5432,
-        }
-    }
-else:
-    db_name = os.environ.get('SQLITE_DB_PATH', str(BASE_DIR / 'db.sqlite3'))
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': db_name,
-        }
-    }
+DATABASES = {
+    'default': dj_database_url.config(default='sqlite:///db.sqlite3')
+}
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
