@@ -7,14 +7,23 @@ User = get_user_model()
 class ProductSerializer(serializers.ModelSerializer):
     vendor_name = serializers.CharField(source='vendor.username', read_only=True)
     name = serializers.CharField(required=False)  # Allow 'name' as input
+    image_url = serializers.SerializerMethodField()  # Computed field for image URL
 
     class Meta:
         model = Product
         fields = [
-            'id', 'title', 'name', 'description', 'price', 'image_url', 'category', 'stock', 'vendor', 'vendor_name', 'is_active', 'created_at'
+            'id', 'title', 'name', 'description', 'price', 'image', 'image_url', 'category', 'stock', 'vendor', 'vendor_name', 'is_active', 'created_at'
         ]
         read_only_fields = ['vendor']
         extra_kwargs = {'title': {'required': False}}  # Make title not required
+
+    def get_image_url(self, obj):
+        if obj.image:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.image.url)
+            return obj.image.url
+        return None
 
     def validate(self, data):
         # Ensure either 'title' or 'name' is provided
