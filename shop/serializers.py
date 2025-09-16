@@ -2,7 +2,8 @@ from rest_framework import serializers
 from django.core.files.base import ContentFile
 import base64
 import uuid
-import imghdr
+import io
+from PIL import Image
 
 from .models import Product, Order, OrderItem
 from django.contrib.auth import get_user_model
@@ -28,10 +29,27 @@ class HybridImageField(serializers.ImageField):
             except Exception:
                 self.fail("invalid_image")
 
-            # Guess file extension from header
-            ext = imghdr.what(None, h=decoded_file) or "jpg"
-            if ext == "jpeg":
-                ext = "jpg"
+            # Determine file extension using data URL header or Pillow fallback
+            ext = None
+            try:
+                # Try to get extension from data URL header if present
+                # Example: data:image/png;base64,
+                if isinstance(data, str) and data.startswith('data:image/'):
+                    header = data.split(';base64,', 1)[0]
+                    ext = header.split('data:image/', 1)[-1]
+                if not ext:
+                    # Validate bytes as an image and infer format using Pillow
+                    img = Image.open(io.BytesIO(decoded_file))
+                    img.verify()  # verify integrity
+                    img = Image.open(io.BytesIO(decoded_file))  # reopen after verify
+                    fmt = (img.format or 'JPEG').upper()
+                    mapping = {'JPEG': 'jpg', 'PNG': 'png', 'GIF': 'gif', 'WEBP': 'webp', 'BMP': 'bmp'}
+                    ext = mapping.get(fmt, 'jpg')
+                if ext == 'jpeg':
+                    ext = 'jpg'
+            except Exception:
+                self.fail("invalid_image")
+
             file_name = f"{uuid.uuid4().hex[:12]}.{ext}"
             data = ContentFile(decoded_file, name=file_name)
             return super().to_internal_value(data)

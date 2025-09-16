@@ -5,3 +5,4 @@ djangorestframework>=3.15.2
 djangorestframework-simplejwt>=5.3.1
 dj-database-url>=2.2.0
 gunicorn
+Pillow>=11.0.0
