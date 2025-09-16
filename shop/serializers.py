@@ -1,5 +1,4 @@
 from rest_framework import serializers
-from drf_extra_fields.fields import Base64ImageField
 from .models import Product, Order, OrderItem
 from django.contrib.auth import get_user_model
 
@@ -8,7 +7,6 @@ User = get_user_model()
 class ProductSerializer(serializers.ModelSerializer):
     vendor_name = serializers.CharField(source='vendor.username', read_only=True)
     name = serializers.CharField(required=False)  # Allow 'name' as input
-    image = Base64ImageField(required=False)  # Allow base64 encoded images
     image_url = serializers.SerializerMethodField()  # Computed field for image URL
 
     class Meta:
@@ -17,7 +15,11 @@ class ProductSerializer(serializers.ModelSerializer):
             'id', 'title', 'name', 'description', 'price', 'image', 'image_url', 'category', 'stock', 'vendor', 'vendor_name', 'is_active', 'created_at'
         ]
         read_only_fields = ['vendor']
-        extra_kwargs = {'title': {'required': False}, 'name': {'write_only': True}}  # Make title not required, name write-only
+        extra_kwargs = {
+            'title': {'required': False},
+            'name': {'write_only': True},
+            "image": {"required": False, "allow_null": True}
+        }  # Make title not required, name write-only
 
     def get_image_url(self, obj):
         if obj.image:
