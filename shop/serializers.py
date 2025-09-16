@@ -15,7 +15,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'id', 'title', 'name', 'description', 'price', 'image', 'image_url', 'category', 'stock', 'vendor', 'vendor_name', 'is_active', 'created_at'
         ]
         read_only_fields = ['vendor']
-        extra_kwargs = {'title': {'required': False}}  # Make title not required
+        extra_kwargs = {'title': {'required': False}, 'name': {'write_only': True}}  # Make title not required, name write-only
 
     def get_image_url(self, obj):
         if obj.image:
