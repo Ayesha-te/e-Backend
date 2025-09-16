@@ -1,9 +1,12 @@
+import logging
 from rest_framework import viewsets, permissions, parsers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 from .models import Product, Order
 from .serializers import ProductSerializer, OrderSerializer
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -34,7 +37,8 @@ class ProductViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
-            print("Serializer errors:", serializer.errors)
+            # Use safe, parameterized logging to avoid heavy string building
+            logger.warning("Serializer errors: %s", serializer.errors)
             return Response(serializer.errors, status=400)
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)

@@ -95,6 +95,13 @@ REST_FRAMEWORK = {
     ),
 }
 
+# Reduce memory spikes from uploads: prefer temp files and limit in-memory sizes
+FILE_UPLOAD_HANDLERS = [
+    'django.core.files.uploadhandler.TemporaryFileUploadHandler',
+]
+DATA_UPLOAD_MAX_MEMORY_SIZE = 2_500_000  # ~2.5 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 2_500_000  # ~2.5 MB
+
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
