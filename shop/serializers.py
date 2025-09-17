@@ -114,11 +114,14 @@ class ShopSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'logo', 'logo_url', 'company_name', 'products']
 
     def get_logo_url(self, obj):
+        request = self.context.get('request')
+        # Prefer explicit shop logo
         if obj.logo:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.logo.url)
-            return obj.logo.url
+            return request.build_absolute_uri(obj.logo.url) if request else obj.logo.url
+        # Fallback: use vendor's profile logo if available
+        vendor_logo = getattr(getattr(obj, 'vendor', None), 'logo', None)
+        if vendor_logo:
+            return request.build_absolute_uri(vendor_logo.url) if request else vendor_logo.url
         return None
 
 
