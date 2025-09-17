@@ -20,6 +20,17 @@ class SignupSerializer(serializers.ModelSerializer):
         return user
 
 class VendorSerializer(serializers.ModelSerializer):
+    logo_url = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'company_name']
+        fields = ['id', 'username', 'company_name', 'logo_url']
+
+    def get_logo_url(self, obj):
+        logo = getattr(obj, 'logo', None)
+        if logo:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(logo.url)
+            return logo.url
+        return None
