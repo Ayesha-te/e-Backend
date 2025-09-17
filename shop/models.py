@@ -1,6 +1,18 @@
 from django.db import models
 from django.conf import settings
 
+
+
+# Shop model
+class Shop(models.Model):
+    name = models.CharField(max_length=255)
+    logo = models.ImageField(upload_to='shops/', blank=True, null=True)
+    company_name = models.CharField(max_length=255, blank=True)
+    vendor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='shops')
+
+    def __str__(self):
+        return self.name
+
 User = settings.AUTH_USER_MODEL
 
 class Product(models.Model):
@@ -11,6 +23,7 @@ class Product(models.Model):
     category = models.CharField(max_length=100, blank=True)
     stock = models.IntegerField(default=0)
     vendor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='products')
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='products', null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
