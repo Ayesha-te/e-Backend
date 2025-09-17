@@ -17,6 +17,23 @@ class SignupSerializer(serializers.ModelSerializer):
         user = User(**validated_data)
         user.set_password(password)
         user.save()
+
+        # Automatically create a Shop for every new user (customer, vendor, dropshipper)
+        # Name preference: company_name or "<username>'s Shop"
+        try:
+            from shop.models import Shop  # Local import to avoid circular imports at module load
+            default_name = user.company_name or f"{user.username}'s Shop"
+            Shop.objects.get_or_create(
+                vendor=user,
+                defaults={
+                    'name': default_name,
+                    'company_name': user.company_name or '',
+                },
+            )
+        except Exception:
+            # Avoid breaking signup if shop creation has any issue
+            pass
+
         return user
 
 class VendorSerializer(serializers.ModelSerializer):
