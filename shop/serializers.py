@@ -4,9 +4,9 @@ import base64
 import uuid
 import io
 from PIL import Image
-
-from .models import Product, Order, OrderItem
 from django.contrib.auth import get_user_model
+
+from .models import Product, Order, OrderItem, Shop
 
 User = get_user_model()
 
@@ -105,6 +105,23 @@ class OrderItemSerializer(serializers.ModelSerializer):
         fields = ['id', 'product', 'product_title', 'quantity', 'price']
 
 
+class ShopSerializer(serializers.ModelSerializer):
+    logo_url = serializers.SerializerMethodField()
+    products = ProductSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Shop
+        fields = ['id', 'name', 'logo', 'logo_url', 'company_name', 'products']
+
+    def get_logo_url(self, obj):
+        if obj.logo:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.logo.url)
+            return obj.logo.url
+        return None
+
+
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True)
 
@@ -114,18 +131,15 @@ class OrderSerializer(serializers.ModelSerializer):
             'id', 'user', 'guest_name', 'guest_email', 'guest_phone', 'guest_address',
             'status', 'total_amount', 'created_at', 'items'
         ]
-        read_only_fields = ['user', 'status', 'total_amount']
+        read_only_fields = ['total_amount', 'status', 'created_at']
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
-        request = self.context.get('request')
-        user = request.user if request and request.user.is_authenticated else None
-        order = Order.objects.create(user=user, **validated_data)
+        user = self.context['request'].user if 'request' in self.context else None
+        order = Order.objects.create(user=user if user and user.is_authenticated else None, **validated_data)
         total = 0
         for item in items_data:
-            # Accept product as an ID from the frontend
-            product_id = item.get('product')
-            product = Product.objects.get(pk=product_id)
+            product = item['product'] if isinstance(item['product'], Product) else Product.objects.get(pk=item['product'].id if hasattr(item['product'], 'id') else item['product'])
             quantity = item.get('quantity', 1)
             price = product.price
             OrderItem.objects.create(order=order, product=product, quantity=quantity, price=price)

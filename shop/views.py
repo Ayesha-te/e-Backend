@@ -3,8 +3,13 @@ from rest_framework import viewsets, permissions, parsers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
-from .models import Product, Order
-from .serializers import ProductSerializer, OrderSerializer
+from .models import Product, Order, Shop
+from .serializers import ProductSerializer, OrderSerializer, ShopSerializer
+# ShopViewSet for listing shops with logo and products
+class ShopViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Shop.objects.all().prefetch_related('products')
+    serializer_class = ShopSerializer
+    permission_classes = [permissions.AllowAny]
 
 logger = logging.getLogger(__name__)
 
