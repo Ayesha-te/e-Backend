@@ -1,7 +1,6 @@
 from pathlib import Path
 import os
 from datetime import timedelta
-from urllib.parse import urlparse
 import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -56,35 +55,14 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'backend.wsgi.application'
 
-# Database configuration: prefer Render's DATABASE_URL; else use DB_* vars; else fallback to SQLite
-DATABASES = {}
-_db_url = os.environ.get("DATABASE_URL")
-if _db_url:
-    # Parse DATABASE_URL (Render provides Internal/External Database URL)
-    DATABASES["default"] = dj_database_url.parse(_db_url, conn_max_age=600, ssl_require=True)
-else:
-    DB_NAME = os.getenv("DB_NAME")
-    DB_USER = os.getenv("DB_USER")
-    DB_PASSWORD = os.getenv("DB_PASSWORD")
-    DB_HOST = os.getenv("DB_HOST")
-    DB_PORT = os.getenv("DB_PORT", "5432")
-
-    if all([DB_NAME, DB_USER, DB_PASSWORD, DB_HOST]):
-        DATABASES["default"] = {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": DB_NAME,
-            "USER": DB_USER,
-            "PASSWORD": DB_PASSWORD,
-            "HOST": DB_HOST,
-            "PORT": DB_PORT,
-            "OPTIONS": {"sslmode": "require"},
-        }
-    else:
-        # Local development fallback
-        DATABASES["default"] = {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
+# ✅ Database: use DATABASE_URL (Render gives this for Postgres)
+DATABASES = {
+    'default': dj_database_url.config(
+        default=os.getenv("DATABASE_URL"),
+        conn_max_age=600,
+        ssl_require=True,
+    )
+}
 
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
