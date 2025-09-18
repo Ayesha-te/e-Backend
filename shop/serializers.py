@@ -6,7 +6,7 @@ import io
 from PIL import Image
 from django.contrib.auth import get_user_model
 
-from .models import Product, Order, OrderItem, Shop
+from .models import Product, Order, OrderItem, Shop, Cart, CartItem
 
 User = get_user_model()
 
@@ -109,20 +109,22 @@ class OrderItemSerializer(serializers.ModelSerializer):
 class ShopSerializer(serializers.ModelSerializer):
     logo_url = serializers.SerializerMethodField()
     products = ProductSerializer(many=True, read_only=True)
+    shop_type = serializers.CharField(read_only=True)
 
     class Meta:
         model = Shop
-        fields = ['id', 'name', 'logo', 'logo_url', 'company_name', 'products']
+        fields = ['id', 'name', 'logo', 'logo_url', 'company_name', 'shop_type', 'products']
 
     def get_logo_url(self, obj):
         request = self.context.get('request')
         # Prefer explicit shop logo
         if obj.logo:
             return request.build_absolute_uri(obj.logo.url) if request else obj.logo.url
-        # Fallback: use vendor's profile logo if available
-        vendor_logo = getattr(getattr(obj, 'vendor', None), 'logo', None)
-        if vendor_logo:
-            return request.build_absolute_uri(vendor_logo.url) if request else vendor_logo.url
+        # Fallback: use owner's profile logo if available
+        owner = getattr(obj, 'owner', None) or getattr(obj, 'vendor', None)
+        owner_logo = getattr(owner, 'logo', None) if owner else None
+        if owner_logo:
+            return request.build_absolute_uri(owner_logo.url) if request else owner_logo.url
         return None
 
 
@@ -133,6 +135,7 @@ class OrderSerializer(serializers.ModelSerializer):
         model = Order
         fields = [
             'id', 'user', 'guest_name', 'guest_email', 'guest_phone', 'guest_address',
+            'shipping_phone', 'shipping_address', 'dropshipper_shop',
             'status', 'total_amount', 'created_at', 'items'
         ]
         read_only_fields = ['user', 'total_amount', 'status', 'created_at']
@@ -161,3 +164,18 @@ class OrderSerializer(serializers.ModelSerializer):
         order.total_amount = total
         order.save()
         return order
+
+class CartItemSerializer(serializers.ModelSerializer):
+    product_title = serializers.CharField(source='product.title', read_only=True)
+    price = serializers.DecimalField(source='product.price', max_digits=10, decimal_places=2, read_only=True)
+
+    class Meta:
+        model = CartItem
+        fields = ['id', 'product', 'product_title', 'quantity', 'price']
+
+class CartSerializer(serializers.ModelSerializer):
+    items = CartItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Cart
+        fields = ['id', 'items']

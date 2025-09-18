@@ -3,13 +3,33 @@ from rest_framework import viewsets, permissions, parsers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
-from .models import Product, Order, Shop
-from .serializers import ProductSerializer, OrderSerializer, ShopSerializer
+from .models import Product, Order, Shop, Cart, CartItem
+from .serializers import ProductSerializer, OrderSerializer, ShopSerializer, CartSerializer, CartItemSerializer
 # ShopViewSet for listing shops with logo and products
 class ShopViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Shop.objects.all().prefetch_related('products')
     serializer_class = ShopSerializer
     permission_classes = [permissions.AllowAny]
+
+    @action(detail=False, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticated])
+    def my_shop(self, request):
+        """Get or create the current user's dropshipper shop."""
+        user = request.user
+        shop, created = Shop.objects.get_or_create(owner=user, shop_type=Shop.Type.DROPSHIPPER, defaults={
+            'name': getattr(user, 'company_name', '') or f"{user.username}'s Shop",
+            'company_name': getattr(user, 'company_name', '') or '',
+            'vendor': user,  # keep backward-compat linkage
+        })
+        if request.method == 'POST':
+            name = request.data.get('name')
+            company_name = request.data.get('company_name')
+            if name:
+                shop.name = name
+            if company_name is not None:
+                shop.company_name = company_name
+            shop.save()
+        ser = self.get_serializer(shop)
+        return Response(ser.data)
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +45,9 @@ class ProductViewSet(viewsets.ModelViewSet):
     parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy', 'my_products']:
+        if self.action in ['create', 'update', 'partial_update', 'destroy', 'my_products', 'import_to_my_shop']:
+            if self.action == 'import_to_my_shop':
+                return [permissions.IsAuthenticated()]  # dropshipper only enforced in handler
             return [permissions.IsAuthenticated(), IsVendor()]
         return [permissions.AllowAny()]
 
@@ -38,12 +60,14 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         # Ensure the product is linked to the vendor and their default shop
-        # Create/get a default shop for this user if not exists
+        # Create/get a default vendor shop for this user if not exists
         shop, _ = Shop.objects.get_or_create(
             vendor=self.request.user,
             defaults={
                 'name': getattr(self.request.user, 'company_name', None) or f"{self.request.user.username}'s Shop",
                 'company_name': getattr(self.request.user, 'company_name', '') or '',
+                'owner': self.request.user,
+                'shop_type': Shop.Type.VENDOR,
             },
         )
         serializer.save(vendor=self.request.user, shop=shop)
@@ -64,8 +88,40 @@ class ProductViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(products, many=True)
         return Response(serializer.data)
 
+    @action(detail=True, methods=['post'])
+    def import_to_my_shop(self, request, pk=None):
+        """Dropshipper clones a vendor product into their own shop for display/sale."""
+        user = request.user
+        if not user.is_authenticated or getattr(user, 'role', None) != 'dropshipper':
+            return Response({'detail': 'Dropshipper only'}, status=403)
+        try:
+            src: Product = self.get_object()
+        except Product.DoesNotExist:
+            return Response({'detail': 'Not found'}, status=404)
+
+        # Find or create dropshipper default shop
+        shop, _ = Shop.objects.get_or_create(owner=user, shop_type=Shop.Type.DROPSHIPPER, defaults={
+            'name': getattr(user, 'company_name', '') or f"{user.username}'s Shop",
+            'company_name': getattr(user, 'company_name', '') or '',
+            'vendor': user,
+        })
+
+        # Create a new product under dropshipper shop, keeping vendor attribution to original src.vendor
+        clone = Product.objects.create(
+            title=src.title,
+            description=src.description,
+            price=src.price,
+            image=src.image,
+            category=src.category,
+            stock=src.stock,
+            vendor=src.vendor,  # vendor remains original vendor
+            shop=shop,
+            is_active=True,
+        )
+        return Response(ProductSerializer(clone, context={'request': request}).data, status=201)
+
 class OrderViewSet(viewsets.ModelViewSet):
-    queryset = Order.objects.all().prefetch_related('items__product')
+    queryset = Order.objects.all().prefetch_related('items__product', 'dropshipper_shop')
     serializer_class = OrderSerializer
 
     def get_permissions(self):
@@ -78,11 +134,11 @@ class OrderViewSet(viewsets.ModelViewSet):
         if not user.is_authenticated:
             return Order.objects.none()
         if getattr(user, 'role', None) == 'vendor':
-            # Show orders that include vendor's products
+            # Vendor sees orders containing their products
             return Order.objects.filter(items__product__vendor=user).distinct()
         if getattr(user, 'role', None) == 'dropshipper':
-            # Placeholder: show all for dropshipper or apply logic later
-            return Order.objects.all()
+            # Dropshipper sees orders assigned to their shop
+            return Order.objects.filter(dropshipper_shop__owner=user).distinct()
         return Order.objects.filter(user=user)
 
     def create(self, request, *args, **kwargs):
@@ -93,3 +149,56 @@ class OrderViewSet(viewsets.ModelViewSet):
         self.perform_create(serializer)
         headers = self.get_success_headers(serializer.data)
         return Response(serializer.data, status=201, headers=headers)
+
+class CartViewSet(viewsets.ViewSet):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def _get_or_create_cart(self, user):
+        cart, _ = Cart.objects.get_or_create(user=user)
+        return cart
+
+    def list(self, request):
+        cart = self._get_or_create_cart(request.user)
+        return Response(CartSerializer(cart).data)
+
+    @action(detail=False, methods=['post'])
+    def add(self, request):
+        cart = self._get_or_create_cart(request.user)
+        product_id = request.data.get('product')
+        quantity = max(1, int(request.data.get('quantity', 1)))
+        try:
+            product = Product.objects.get(pk=product_id)
+        except Product.DoesNotExist:
+            return Response({'detail': 'Invalid product'}, status=400)
+        item, created = CartItem.objects.get_or_create(cart=cart, product=product, defaults={'quantity': quantity})
+        if not created:
+            item.quantity += quantity
+            item.save()
+        return Response(CartSerializer(cart).data)
+
+    @action(detail=False, methods=['patch'])
+    def update_item(self, request):
+        cart = self._get_or_create_cart(request.user)
+        item_id = request.data.get('id')
+        quantity = int(request.data.get('quantity', 1))
+        try:
+            item = cart.items.get(pk=item_id)
+        except CartItem.DoesNotExist:
+            return Response({'detail': 'Item not found'}, status=404)
+        if quantity < 1:
+            item.delete()
+        else:
+            item.quantity = quantity
+            item.save()
+        return Response(CartSerializer(cart).data)
+
+    @action(detail=False, methods=['delete'])
+    def remove(self, request):
+        cart = self._get_or_create_cart(request.user)
+        item_id = request.data.get('id')
+        try:
+            item = cart.items.get(pk=item_id)
+            item.delete()
+        except CartItem.DoesNotExist:
+            return Response({'detail': 'Item not found'}, status=404)
+        return Response(CartSerializer(cart).data)
