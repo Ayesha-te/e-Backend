@@ -5,5 +5,10 @@
 # - Starts Gunicorn
 set -e
 cd "$(dirname "$0")"
-python manage.py migrate --noinput
+
+# Optionally skip migrations if handled by Render's postdeployCommand
+if [ -z "$SKIP_MIGRATE" ]; then
+  python manage.py migrate --noinput
+fi
+
 exec gunicorn backend.wsgi:application --bind 0.0.0.0:${PORT:-8000}

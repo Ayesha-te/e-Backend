@@ -1,0 +1,48 @@
+# Render Blueprint for automatic migrations and backend deployment
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: ecommerce-backend
+    env: python
+    plan: free
+    rootDir: backend
+    autoDeploy: true
+
+    # Build and start
+    buildCommand: pip install -r requirements.txt
+    startCommand: bash start.sh
+
+    # Run DB migrations after each successful deploy
+    postDeployCommand: |
+      python manage.py migrate --noinput
+
+    # Environment variables — mark secrets as unsynced so you can set in dashboard
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      # If you prefer explicit vars instead of DATABASE_URL, add the following in the dashboard:
+      # - key: DB_NAME (unsynced)
+      # - key: DB_USER (unsynced)
+      # - key: DB_PASSWORD (unsynced)
+      # - key: DB_HOST (unsynced)
+      # - key: DB_PORT (optional, default 5432)
+      - key: SKIP_MIGRATE
+        value: "1"  # avoid running migrate twice (start.sh already supports skipping)
+
+# Optional: one-off job to run migrations manually from Render dashboard when needed
+# You can trigger this job on demand if you need to re-run migrations without a new deploy
+jobs:
+  - type: job
+    name: migrate-once
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python manage.py migrate --noinput
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
