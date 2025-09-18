@@ -103,6 +103,7 @@ class OrderItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderItem
         fields = ['id', 'product', 'product_title', 'quantity', 'price']
+        read_only_fields = ['price']  # price is computed from the product at creation time
 
 
 class ShopSerializer(serializers.ModelSerializer):
@@ -134,7 +135,16 @@ class OrderSerializer(serializers.ModelSerializer):
             'id', 'user', 'guest_name', 'guest_email', 'guest_phone', 'guest_address',
             'status', 'total_amount', 'created_at', 'items'
         ]
-        read_only_fields = ['total_amount', 'status', 'created_at']
+        read_only_fields = ['user', 'total_amount', 'status', 'created_at']
+
+    def validate_items(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one item is required.")
+        for item in value:
+            qty = item.get('quantity', 1)
+            if qty is None or int(qty) < 1:
+                raise serializers.ValidationError("Quantity must be at least 1 for all items.")
+        return value
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
@@ -142,8 +152,9 @@ class OrderSerializer(serializers.ModelSerializer):
         order = Order.objects.create(user=user if user and user.is_authenticated else None, **validated_data)
         total = 0
         for item in items_data:
-            product = item['product'] if isinstance(item['product'], Product) else Product.objects.get(pk=item['product'].id if hasattr(item['product'], 'id') else item['product'])
-            quantity = item.get('quantity', 1)
+            # item['product'] will already be a Product instance thanks to PKRelatedField
+            product = item['product'] if isinstance(item['product'], Product) else Product.objects.get(pk=item['product'])
+            quantity = int(item.get('quantity', 1))
             price = product.price
             OrderItem.objects.create(order=order, product=product, quantity=quantity, price=price)
             total += price * quantity

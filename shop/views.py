@@ -84,3 +84,12 @@ class OrderViewSet(viewsets.ModelViewSet):
             # Placeholder: show all for dropshipper or apply logic later
             return Order.objects.all()
         return Order.objects.filter(user=user)
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            logger.warning("Order create validation errors: %s", serializer.errors)
+            return Response(serializer.errors, status=400)
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=201, headers=headers)
