@@ -70,9 +70,9 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            'id', 'title', 'name', 'description', 'price', 'image', 'image_url', 'category', 'stock', 'vendor', 'vendor_name', 'shop_name', 'shop_type', 'shop_logo_url', 'is_active', 'created_at'
+            'id', 'title', 'name', 'description', 'price', 'image', 'image_url', 'category', 'stock', 'vendor', 'vendor_name', 'shop', 'shop_name', 'shop_type', 'shop_logo_url', 'is_active', 'created_at'
         ]
-        read_only_fields = ['vendor']
+        read_only_fields = ['vendor', 'shop']
         extra_kwargs = {
             'title': {'required': False},
             'name': {'write_only': True},

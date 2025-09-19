@@ -50,10 +50,10 @@ class ProductViewSet(viewsets.ModelViewSet):
     parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
     def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy', 'my_products', 'import_to_my_shop']:
-            if self.action == 'import_to_my_shop':
-                return [permissions.IsAuthenticated()]  # dropshipper only enforced in handler
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
             return [permissions.IsAuthenticated(), IsVendor()]
+        elif self.action in ['my_products', 'import_to_my_shop']:
+            return [permissions.IsAuthenticated()]
         return [permissions.AllowAny()]
 
     def get_queryset(self):
@@ -61,9 +61,11 @@ class ProductViewSet(viewsets.ModelViewSet):
         vendor_id = self.request.query_params.get('vendor')
         if vendor_id:
             qs = qs.filter(vendor_id=vendor_id)
-        # When listing to public, prefer showing only vendor products that are not in dropshipper shops (for import page)
-        if self.action == 'list' and not self.request.user.is_authenticated:
-            qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
+        # When listing for import, show only vendor products
+        if self.action == 'list':
+            user = self.request.user
+            if not user.is_authenticated or getattr(user, 'role', None) == 'dropshipper':
+                qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
         return qs
 
     def perform_create(self, serializer):
