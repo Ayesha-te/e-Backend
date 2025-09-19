@@ -42,7 +42,11 @@ User = get_user_model()
 
 class IsVendor(permissions.BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and getattr(request.user, 'role', None) == 'vendor'
+        return (
+            request.user and
+            request.user.is_authenticated and
+            (getattr(request.user, 'role', None) in ['vendor', 'customer'] or request.user.is_superuser)
+        )
 
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.filter(is_active=True).select_related('vendor', 'shop')
@@ -61,10 +65,10 @@ class ProductViewSet(viewsets.ModelViewSet):
         vendor_id = self.request.query_params.get('vendor')
         if vendor_id:
             qs = qs.filter(vendor_id=vendor_id)
-        # When listing for import, show only vendor products
+        # When listing, show only vendor products unless the user is a vendor
         if self.action == 'list':
             user = self.request.user
-            if not user.is_authenticated or getattr(user, 'role', None) == 'dropshipper':
+            if not user.is_authenticated or getattr(user, 'role', None) != 'vendor':
                 qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
         return qs
 
