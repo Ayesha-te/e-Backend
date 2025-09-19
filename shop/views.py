@@ -7,13 +7,14 @@ from .models import Product, Order, Shop, Cart, CartItem
 from .serializers import ProductSerializer, OrderSerializer, ShopSerializer, CartSerializer, CartItemSerializer
 # ShopViewSet for listing shops with logo and products
 class ShopViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Shop.objects.all().prefetch_related('products')
+    # Public listing should expose only dropshipper shops and their products
+    queryset = Shop.objects.filter(shop_type=Shop.Type.DROPSHIPPER).prefetch_related('products')
     serializer_class = ShopSerializer
     permission_classes = [permissions.AllowAny]
 
-    @action(detail=False, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticated])
+    @action(detail=False, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticated], parser_classes=[parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser])
     def my_shop(self, request):
-        """Get or create the current user's dropshipper shop."""
+        """Get or create the current user's dropshipper shop and allow updating name/logo/company_name."""
         user = request.user
         shop, created = Shop.objects.get_or_create(owner=user, shop_type=Shop.Type.DROPSHIPPER, defaults={
             'name': getattr(user, 'company_name', '') or f"{user.username}'s Shop",
@@ -21,14 +22,18 @@ class ShopViewSet(viewsets.ReadOnlyModelViewSet):
             'vendor': user,  # keep backward-compat linkage
         })
         if request.method == 'POST':
+            # Support both JSON and multipart (for logo file upload)
             name = request.data.get('name')
             company_name = request.data.get('company_name')
-            if name:
+            logo = request.data.get('logo') or request.FILES.get('logo')
+            if name is not None:
                 shop.name = name
             if company_name is not None:
                 shop.company_name = company_name
+            if logo is not None:
+                shop.logo = logo
             shop.save()
-        ser = self.get_serializer(shop)
+        ser = self.get_serializer(shop, context={'request': request})
         return Response(ser.data)
 
 logger = logging.getLogger(__name__)
@@ -40,7 +45,7 @@ class IsVendor(permissions.BasePermission):
         return request.user.is_authenticated and getattr(request.user, 'role', None) == 'vendor'
 
 class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.filter(is_active=True).select_related('vendor')
+    queryset = Product.objects.filter(is_active=True).select_related('vendor', 'shop')
     serializer_class = ProductSerializer
     parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
 
@@ -56,6 +61,9 @@ class ProductViewSet(viewsets.ModelViewSet):
         vendor_id = self.request.query_params.get('vendor')
         if vendor_id:
             qs = qs.filter(vendor_id=vendor_id)
+        # When listing to public, prefer showing only vendor products that are not in dropshipper shops (for import page)
+        if self.action == 'list' and not self.request.user.is_authenticated:
+            qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
         return qs
 
     def perform_create(self, serializer):
@@ -84,7 +92,12 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def my_products(self, request):
-        products = Product.objects.filter(vendor=request.user)
+        # Vendor: their own products; Dropshipper: products in their own shop
+        user = request.user
+        if getattr(user, 'role', None) == 'dropshipper':
+            products = Product.objects.filter(shop__owner=user)
+        else:
+            products = Product.objects.filter(vendor=user)
         serializer = self.get_serializer(products, many=True)
         return Response(serializer.data)
 

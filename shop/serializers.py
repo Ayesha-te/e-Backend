@@ -60,6 +60,9 @@ class HybridImageField(serializers.ImageField):
 
 class ProductSerializer(serializers.ModelSerializer):
     vendor_name = serializers.CharField(source='vendor.username', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+    shop_type = serializers.CharField(source='shop.shop_type', read_only=True)
+    shop_logo_url = serializers.SerializerMethodField(read_only=True)
     name = serializers.CharField(required=False)  # Allow 'name' as input
     image_url = serializers.SerializerMethodField()  # Computed field for image URL
     image = HybridImageField(required=False, allow_null=True)
@@ -67,7 +70,7 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            'id', 'title', 'name', 'description', 'price', 'image', 'image_url', 'category', 'stock', 'vendor', 'vendor_name', 'is_active', 'created_at'
+            'id', 'title', 'name', 'description', 'price', 'image', 'image_url', 'category', 'stock', 'vendor', 'vendor_name', 'shop_name', 'shop_type', 'shop_logo_url', 'is_active', 'created_at'
         ]
         read_only_fields = ['vendor']
         extra_kwargs = {
@@ -75,6 +78,19 @@ class ProductSerializer(serializers.ModelSerializer):
             'name': {'write_only': True},
             'image': {'required': False, 'allow_null': True},
         }
+
+    def get_shop_logo_url(self, obj):
+        shop = getattr(obj, 'shop', None)
+        if not shop:
+            return None
+        request = self.context.get('request')
+        if shop.logo:
+            return request.build_absolute_uri(shop.logo.url) if request else shop.logo.url
+        owner = getattr(shop, 'owner', None) or getattr(shop, 'vendor', None)
+        owner_logo = getattr(owner, 'logo', None) if owner else None
+        if owner_logo:
+            return request.build_absolute_uri(owner_logo.url) if request else owner_logo.url
+        return None
 
     def get_image_url(self, obj):
         if obj.image:
@@ -110,6 +126,7 @@ class ShopSerializer(serializers.ModelSerializer):
     logo_url = serializers.SerializerMethodField()
     products = ProductSerializer(many=True, read_only=True)
     shop_type = serializers.CharField(read_only=True)
+    logo = HybridImageField(required=False, allow_null=True)
 
     class Meta:
         model = Shop
@@ -130,15 +147,61 @@ class ShopSerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemSerializer(many=True)
+    dropshipper_shop_name = serializers.CharField(source='dropshipper_shop.name', read_only=True)
+    dropshipper_shop_logo_url = serializers.SerializerMethodField(read_only=True)
+    dropshipper_shop_owner_name = serializers.SerializerMethodField(read_only=True)
+
+    # Customer fields unified for convenience in frontend
+    customer_name = serializers.SerializerMethodField(read_only=True)
+    customer_email = serializers.SerializerMethodField(read_only=True)
+    customer_phone = serializers.SerializerMethodField(read_only=True)
+    customer_address = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Order
         fields = [
             'id', 'user', 'guest_name', 'guest_email', 'guest_phone', 'guest_address',
-            'shipping_phone', 'shipping_address', 'dropshipper_shop',
-            'status', 'total_amount', 'created_at', 'items'
+            'shipping_phone', 'shipping_address', 'dropshipper_shop', 'dropshipper_shop_name', 'dropshipper_shop_logo_url', 'dropshipper_shop_owner_name',
+            'status', 'total_amount', 'created_at', 'items',
+            'customer_name', 'customer_email', 'customer_phone', 'customer_address'
         ]
         read_only_fields = ['user', 'total_amount', 'status', 'created_at']
+
+    def get_dropshipper_shop_logo_url(self, obj):
+        shop = getattr(obj, 'dropshipper_shop', None)
+        if not shop:
+            return None
+        request = self.context.get('request')
+        if shop.logo:
+            return request.build_absolute_uri(shop.logo.url) if request else shop.logo.url
+        owner = getattr(shop, 'owner', None) or getattr(shop, 'vendor', None)
+        owner_logo = getattr(owner, 'logo', None) if owner else None
+        if owner_logo:
+            return request.build_absolute_uri(owner_logo.url) if request else owner_logo.url
+        return None
+
+    def get_dropshipper_shop_owner_name(self, obj):
+        shop = getattr(obj, 'dropshipper_shop', None)
+        if not shop:
+            return None
+        owner = getattr(shop, 'owner', None) or getattr(shop, 'vendor', None)
+        if owner:
+            # prefer company_name then username
+            name = getattr(owner, 'company_name', None) or getattr(owner, 'username', None)
+            return name
+        return None
+
+    def get_customer_name(self, obj):
+        return obj.guest_name or getattr(obj.user, 'username', '') if obj.user_id else obj.guest_name
+
+    def get_customer_email(self, obj):
+        return obj.guest_email or getattr(obj.user, 'email', '') if obj.user_id else obj.guest_email
+
+    def get_customer_phone(self, obj):
+        return obj.shipping_phone or obj.guest_phone
+
+    def get_customer_address(self, obj):
+        return obj.shipping_address or obj.guest_address
 
     def validate_items(self, value):
         if not value:
