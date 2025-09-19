@@ -67,17 +67,17 @@ class ProductViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        # Ensure the product is linked to the vendor and their default shop
-        # Create/get a default vendor shop for this user if not exists
-        shop, _ = Shop.objects.get_or_create(
-            vendor=self.request.user,
-            defaults={
-                'name': getattr(self.request.user, 'company_name', None) or f"{self.request.user.username}'s Shop",
-                'company_name': getattr(self.request.user, 'company_name', '') or '',
-                'owner': self.request.user,
-                'shop_type': Shop.Type.VENDOR,
-            },
-        )
+        # Ensure the product is linked to the vendor and their VENDOR-type shop
+        # Avoid accidentally reusing a DROPSHIPPER shop that shares the same vendor FK
+        shop = Shop.objects.filter(vendor=self.request.user, shop_type=Shop.Type.VENDOR).first()
+        if not shop:
+            shop = Shop.objects.create(
+                vendor=self.request.user,
+                owner=self.request.user,
+                shop_type=Shop.Type.VENDOR,
+                name=getattr(self.request.user, 'company_name', None) or f"{self.request.user.username}'s Shop",
+                company_name=getattr(self.request.user, 'company_name', '') or '',
+            )
         serializer.save(vendor=self.request.user, shop=shop)
 
     def create(self, request, *args, **kwargs):
