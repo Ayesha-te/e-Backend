@@ -1,250 +1,132 @@
-import logging
-from rest_framework import viewsets, permissions, parsers
-from rest_framework.decorators import action
+from rest_framework import generics, permissions, status
 from rest_framework.response import Response
+from rest_framework.decorators import api_view, permission_classes
+from django.db.models import Q
 from django.contrib.auth import get_user_model
-from .models import Product, Order, Shop, Cart, CartItem
-from .serializers import ProductSerializer, OrderSerializer, ShopSerializer, CartSerializer, CartItemSerializer
-# ShopViewSet for listing shops with logo and products
-class ShopViewSet(viewsets.ReadOnlyModelViewSet):
-    # Only show dropshipper's own shop in dropshipper dashboard
-    serializer_class = ShopSerializer
-    permission_classes = [permissions.AllowAny]
-
-    def get_queryset(self):
-        user = self.request.user
-        if user.is_authenticated and getattr(user, 'role', None) == 'dropshipper':
-            # Dropshipper sees only their own shop
-            return Shop.objects.filter(owner=user, shop_type=Shop.Type.DROPSHIPPER).prefetch_related('products')
-        # For others (public, vendor), return no shops or only dropshipper shops as needed
-        return Shop.objects.none()
-
-    @action(detail=False, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticated], parser_classes=[parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser])
-    def my_shop(self, request):
-        """Get or create the current user's dropshipper shop and allow updating name/logo/company_name."""
-        user = request.user
-        shop, created = Shop.objects.get_or_create(owner=user, shop_type=Shop.Type.DROPSHIPPER, defaults={
-            'name': getattr(user, 'company_name', '') or f"{user.username}'s Shop",
-            'company_name': getattr(user, 'company_name', '') or '',
-            'vendor': user,  # keep backward-compat linkage
-        })
-        if request.method == 'POST':
-            # Support both JSON and multipart (for logo file upload)
-            name = request.data.get('name')
-            company_name = request.data.get('company_name')
-            logo = request.data.get('logo') or request.FILES.get('logo')
-            if name is not None:
-                shop.name = name
-            if company_name is not None:
-                shop.company_name = company_name
-            if logo is not None:
-                shop.logo = logo
-            shop.save()
-        ser = self.get_serializer(shop, context={'request': request})
-        return Response(ser.data)
-
-logger = logging.getLogger(__name__)
+from .models import Shop, Product, DropshipImport, Order
+from .serializers import (
+    ShopSerializer,
+    ProductSerializer,
+    ProductCreateSerializer,
+    OrderSerializer,
+    OrderListSerializer,
+)
 
 User = get_user_model()
 
-class IsVendor(permissions.BasePermission):
-    def has_permission(self, request, view):
-        return (
-            request.user and
-            request.user.is_authenticated and
-            (getattr(request.user, 'role', None) in ['vendor', 'dropshipper'] or request.user.is_superuser)
-        )
+# Shops
+class ShopListView(generics.ListAPIView):
+    queryset = Shop.objects.prefetch_related('products', 'owner').all()
+    serializer_class = ShopSerializer
+    permission_classes = [permissions.AllowAny]
 
-class ProductViewSet(viewsets.ModelViewSet):
-    queryset = Product.objects.filter(is_active=True).select_related('vendor', 'shop')
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def my_shop(request):
+    shop, _ = Shop.objects.get_or_create(owner=request.user, defaults={
+        'name': request.user.company_name or f"{request.user.username}'s Shop",
+        'company_name': request.user.company_name or '',
+    })
+    return Response(ShopSerializer(shop, context={'request': request}).data)
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def update_my_shop(request):
+    shop, _ = Shop.objects.get_or_create(owner=request.user)
+    name = request.data.get('name')
+    company_name = request.data.get('company_name')
+    logo = request.data.get('logo') or request.FILES.get('logo')
+    if name is not None:
+        shop.name = name
+    if company_name is not None:
+        shop.company_name = company_name
+    if logo is not None:
+        shop.logo = logo
+    shop.save()
+    return Response(ShopSerializer(shop, context={'request': request}).data)
+
+# Products
+class ProductListView(generics.ListAPIView):
     serializer_class = ProductSerializer
-    parser_classes = [parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser]
-
-    def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [permissions.IsAuthenticated(), IsVendor()]
-        elif self.action in ['my_products', 'import_to_my_shop']:
-            return [permissions.IsAuthenticated()]
-        return [permissions.AllowAny()]
+    permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        qs = super().get_queryset()
         vendor_id = self.request.query_params.get('vendor')
+        qs = Product.objects.select_related('vendor', 'shop')
         if vendor_id:
             qs = qs.filter(vendor_id=vendor_id)
-        # When listing, show vendor products or user's own products if dropshipper
-        if self.action == 'list':
-            user = self.request.user
-            if user.is_authenticated:
-                user_role = getattr(user, 'role', None)
-                if user_role == 'vendor':
-                    # Vendors see all, but can be filtered
-                    pass
-                elif user_role == 'dropshipper':
-                    # Dropshippers see vendor products for importing
-                    qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
-                else:
-                    # Customers see vendor products
-                    qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
-            else:
-                # Anonymous users see vendor products
-                qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
-        # Debug: print SQL and count
-        print(f"[DEBUG] ProductViewSet.get_queryset SQL: {str(qs.query)}")
-        print(f"[DEBUG] ProductViewSet.get_queryset count: {qs.count()}")
-        return qs
+        return qs.order_by('-id')
+
+class MyProductsView(generics.ListAPIView):
+    serializer_class = ProductSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Product.objects.filter(vendor=self.request.user).select_related('vendor', 'shop').order_by('-id')
+
+class CreateProductView(generics.CreateAPIView):
+    serializer_class = ProductCreateSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
     def perform_create(self, serializer):
-        # Always create vendor products in vendor shops only
-        user_role = getattr(self.request.user, 'role', None)
-        if user_role == 'vendor':
-            shop = Shop.objects.filter(vendor=self.request.user, shop_type=Shop.Type.VENDOR).first()
-            if not shop:
-                shop = Shop.objects.create(
-                    vendor=self.request.user,
-                    owner=self.request.user,
-                    shop_type=Shop.Type.VENDOR,
-                    name=getattr(self.request.user, 'company_name', None) or f"{self.request.user.username}'s Shop",
-                    company_name=getattr(self.request.user, 'company_name', '') or '',
-                )
-            serializer.save(vendor=self.request.user, shop=shop)
-        else:
-            # For dropshipper or other roles, fallback to default (should not happen via UI)
-            serializer.save(vendor=self.request.user)
-
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        if not serializer.is_valid():
-            # Use safe, parameterized logging to avoid heavy string building
-            logger.warning("Serializer errors: %s", serializer.errors)
-            return Response(serializer.errors, status=400)
-        self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=201, headers=headers)
-
-    @action(detail=False, methods=['get'])
-    def my_products(self, request):
-        # Vendor: their own products; Dropshipper: only imported products in their own shop
-        user = request.user
-        if getattr(user, 'role', None) == 'dropshipper':
-            # Only show products in dropshipper's own shop (imported)
-            products = Product.objects.filter(shop__owner=user, shop__shop_type=Shop.Type.DROPSHIPPER)
-        else:
-            products = Product.objects.filter(vendor=user, shop__shop_type=Shop.Type.VENDOR)
-        serializer = self.get_serializer(products, many=True)
-        return Response(serializer.data)
-
-    @action(detail=True, methods=['post'])
-    def import_to_my_shop(self, request, pk=None):
-        """Dropshipper clones a vendor product into their own shop for display/sale."""
-        user = request.user
-        if not user.is_authenticated or getattr(user, 'role', None) != 'dropshipper':
-            return Response({'detail': 'Dropshipper only'}, status=403)
-        try:
-            src: Product = self.get_object()
-        except Product.DoesNotExist:
-            return Response({'detail': 'Not found'}, status=404)
-
-        # Find or create dropshipper default shop
-        shop, _ = Shop.objects.get_or_create(owner=user, shop_type=Shop.Type.DROPSHIPPER, defaults={
-            'name': getattr(user, 'company_name', '') or f"{user.username}'s Shop",
-            'company_name': getattr(user, 'company_name', '') or '',
-            'vendor': user,
+        # Ensure a vendor has a shop to attach logo/name for dropshipper display
+        shop, _ = Shop.objects.get_or_create(owner=self.request.user, defaults={
+            'name': self.request.user.company_name or f"{self.request.user.username}'s Shop",
+            'company_name': self.request.user.company_name or '',
         })
+        serializer.save(vendor=self.request.user, shop=shop)
 
-        # Create a new product under dropshipper shop, keeping vendor attribution to original src.vendor
-        clone = Product.objects.create(
-            title=src.title,
-            description=src.description,
-            price=src.price,
-            image=src.image,
-            category=src.category,
-            stock=src.stock,
-            vendor=src.vendor,  # vendor remains original vendor
-            shop=shop,
-            is_active=True,
-        )
-        return Response(ProductSerializer(clone, context={'request': request}).data, status=201)
+# Dropshipper import
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def import_to_my_shop(request, pk: int):
+    # Only dropshipper shops are considered for viewing in dropshipper dashboard
+    # Create or get dropshipper shop for current user
+    shop, _ = Shop.objects.get_or_create(owner=request.user, defaults={
+        'name': request.user.company_name or f"{request.user.username}'s Shop",
+        'company_name': request.user.company_name or '',
+    })
+    try:
+        product = Product.objects.get(pk=pk)
+    except Product.DoesNotExist:
+        return Response({'detail': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
 
-class OrderViewSet(viewsets.ModelViewSet):
-    queryset = Order.objects.all().prefetch_related('items__product', 'dropshipper_shop')
+    DropshipImport.objects.get_or_create(dropshipper=request.user, shop=shop, product=product)
+    return Response({'detail': 'Imported to your shop'})
+
+# Orders
+class CreateOrderView(generics.CreateAPIView):
     serializer_class = OrderSerializer
+    permission_classes = [permissions.AllowAny]  # Guest checkout allowed
 
-    def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
-            return [permissions.IsAuthenticated()]
-        return [permissions.AllowAny()]
+class ListOrdersView(generics.ListAPIView):
+    serializer_class = OrderListSerializer
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
-        if not user.is_authenticated:
-            return Order.objects.none()
-        if getattr(user, 'role', None) == 'vendor':
-            # Vendor sees orders containing their products
-            return Order.objects.filter(items__product__vendor=user).distinct()
-        if getattr(user, 'role', None) == 'dropshipper':
-            # Dropshipper sees orders assigned to their shop
-            return Order.objects.filter(dropshipper_shop__owner=user).distinct()
-        return Order.objects.filter(user=user)
+        # Vendors see orders that contain their products
+        if user.role == 'vendor':
+            return Order.objects.filter(items__vendor=user).distinct().order_by('-id')
+        # Dropshippers see orders made via their shop
+        if user.role == 'dropshipper':
+            return Order.objects.filter(dropshipper_shop__owner=user).order_by('-id')
+        # Fallback: empty for other roles
+        return Order.objects.none()
 
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        if not serializer.is_valid():
-            logger.warning("Order create validation errors: %s", serializer.errors)
-            return Response(serializer.errors, status=400)
-        self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
-        return Response(serializer.data, status=201, headers=headers)
-
-class CartViewSet(viewsets.ViewSet):
-    permission_classes = [permissions.IsAuthenticated]
-
-    def _get_or_create_cart(self, user):
-        cart, _ = Cart.objects.get_or_create(user=user)
-        return cart
-
-    def list(self, request):
-        cart = self._get_or_create_cart(request.user)
-        return Response(CartSerializer(cart).data)
-
-    @action(detail=False, methods=['post'])
-    def add(self, request):
-        cart = self._get_or_create_cart(request.user)
-        product_id = request.data.get('product')
-        quantity = max(1, int(request.data.get('quantity', 1)))
-        try:
-            product = Product.objects.get(pk=product_id)
-        except Product.DoesNotExist:
-            return Response({'detail': 'Invalid product'}, status=400)
-        item, created = CartItem.objects.get_or_create(cart=cart, product=product, defaults={'quantity': quantity})
-        if not created:
-            item.quantity += quantity
-            item.save()
-        return Response(CartSerializer(cart).data)
-
-    @action(detail=False, methods=['patch'])
-    def update_item(self, request):
-        cart = self._get_or_create_cart(request.user)
-        item_id = request.data.get('id')
-        quantity = int(request.data.get('quantity', 1))
-        try:
-            item = cart.items.get(pk=item_id)
-        except CartItem.DoesNotExist:
-            return Response({'detail': 'Item not found'}, status=404)
-        if quantity < 1:
-            item.delete()
-        else:
-            item.quantity = quantity
-            item.save()
-        return Response(CartSerializer(cart).data)
-
-    @action(detail=False, methods=['delete'])
-    def remove(self, request):
-        cart = self._get_or_create_cart(request.user)
-        item_id = request.data.get('id')
-        try:
-            item = cart.items.get(pk=item_id)
-            item.delete()
-        except CartItem.DoesNotExist:
-            return Response({'detail': 'Item not found'}, status=404)
-        return Response(CartSerializer(cart).data)
+@api_view(['PATCH'])
+@permission_classes([permissions.IsAuthenticated])
+def update_order_status(request, pk: int):
+    # Only vendors can update status on orders associated with their products
+    if request.user.role != 'vendor':
+        return Response({'detail': 'Only vendors can update status'}, status=status.HTTP_403_FORBIDDEN)
+    try:
+        order = Order.objects.get(pk=pk, items__vendor=request.user)
+    except Order.DoesNotExist:
+        return Response({'detail': 'Order not found'}, status=status.HTTP_404_NOT_FOUND)
+    status_value = request.data.get('status')
+    if status_value not in ['pending', 'completed']:
+        return Response({'detail': 'Invalid status'}, status=status.HTTP_400_BAD_REQUEST)
+    order.status = status_value
+    order.save(update_fields=['status'])
+    return Response({'detail': 'Status updated'})

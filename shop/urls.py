@@ -1,25 +1,24 @@
-from rest_framework.routers import DefaultRouter
-from django.urls import path, include
-from .views import ProductViewSet, OrderViewSet, ShopViewSet, CartViewSet
-
-router = DefaultRouter()
-router.register(r'products', ProductViewSet, basename='product')
-router.register(r'orders', OrderViewSet, basename='order')
-router.register(r'shops', ShopViewSet, basename='shop')
-
-cart_list = CartViewSet.as_view({'get': 'list'})
-cart_add = CartViewSet.as_view({'post': 'add'})
-cart_update = CartViewSet.as_view({'patch': 'update_item'})
-cart_remove = CartViewSet.as_view({'delete': 'remove'})
+from django.urls import path
+from .views import (
+    ShopListView, my_shop, update_my_shop,
+    ProductListView, MyProductsView, CreateProductView, import_to_my_shop,
+    CreateOrderView, ListOrdersView, update_order_status,
+)
 
 urlpatterns = [
-    *router.urls,
-    path('cart/', cart_list, name='cart-list'),
-    path('cart/add/', cart_add, name='cart-add'),
-    path('cart/update_item/', cart_update, name='cart-update-item'),
-    path('cart/remove/', cart_remove, name='cart-remove'),
-]
+    # Shops
+    path('shops/', ShopListView.as_view()),
+    path('shops/my_shop/', my_shop),          # GET
+    path('shops/my_shop/update/', update_my_shop),  # POST to update
 
-# Additional actions:
-# - /api/shop/products/{id}/import_to_my_shop/ (POST)
-# - /api/shop/shops/my_shop/ (GET, POST)
+    # Products
+    path('products/', ProductListView.as_view()),
+    path('products/my_products/', MyProductsView.as_view()),
+    path('products/create/', CreateProductView.as_view()),
+    path('products/<int:pk>/import_to_my_shop/', import_to_my_shop),
+
+    # Orders
+    path('orders/', CreateOrderView.as_view()),  # POST create guest order
+    path('orders/list/', ListOrdersView.as_view()),  # GET list for vendor/dropshipper
+    path('orders/<int:pk>/', update_order_status),  # PATCH vendor updates status
+]

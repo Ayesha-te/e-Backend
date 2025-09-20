@@ -1,8 +1,7 @@
-Django>=5.0,<6.0
-psycopg[binary]>=3.2.1 # optional if you switch to Postgres
-django-cors-headers>=4.4.0
-djangorestframework>=3.15.2
-djangorestframework-simplejwt>=5.3.1
-dj-database-url>=2.2.0
-gunicorn
-Pillow>=11.0.0
+Django>=5.0
+psycopg2-binary>=2.9
+Pillow>=10.0
+djangorestframework>=3.14
+django-cors-headers>=4.3
+djangorestframework-simplejwt>=5.3
+gunicorn>=21.2

@@ -1,244 +1,132 @@
 from rest_framework import serializers
-from django.core.files.base import ContentFile
-import base64
-import uuid
-import io
-from PIL import Image
 from django.contrib.auth import get_user_model
-
-from .models import Product, Order, OrderItem, Shop, Cart, CartItem
+from .models import Shop, Product, DropshipImport, Order, OrderItem
 
 User = get_user_model()
 
-
-class HybridImageField(serializers.ImageField):
-    """Accept either base64 string or a standard uploaded file."""
-
-    def to_internal_value(self, data):
-        # Base64 string path
-        if isinstance(data, str):
-            base64_str = data
-            if "data:" in data and ";base64," in data:
-                try:
-                    _, base64_str = data.split(";base64,", 1)
-                except ValueError:
-                    self.fail("invalid_image")
-
-            try:
-                decoded_file = base64.b64decode(base64_str)
-            except Exception:
-                self.fail("invalid_image")
-
-            # Determine file extension using data URL header or Pillow fallback
-            ext = None
-            try:
-                # Try to get extension from data URL header if present
-                # Example: data:image/png;base64,
-                if isinstance(data, str) and data.startswith('data:image/'):
-                    header = data.split(';base64,', 1)[0]
-                    ext = header.split('data:image/', 1)[-1]
-                if not ext:
-                    # Validate bytes as an image and infer format using Pillow
-                    img = Image.open(io.BytesIO(decoded_file))
-                    img.verify()  # verify integrity
-                    img = Image.open(io.BytesIO(decoded_file))  # reopen after verify
-                    fmt = (img.format or 'JPEG').upper()
-                    mapping = {'JPEG': 'jpg', 'PNG': 'png', 'GIF': 'gif', 'WEBP': 'webp', 'BMP': 'bmp'}
-                    ext = mapping.get(fmt, 'jpg')
-                if ext == 'jpeg':
-                    ext = 'jpg'
-            except Exception:
-                self.fail("invalid_image")
-
-            file_name = f"{uuid.uuid4().hex[:12]}.{ext}"
-            data = ContentFile(decoded_file, name=file_name)
-            return super().to_internal_value(data)
-
-        # Default behavior for uploaded files (InMemoryUploadedFile/TemporaryUploadedFile)
-        return super().to_internal_value(data)
-
-
-class ProductSerializer(serializers.ModelSerializer):
-    vendor_name = serializers.CharField(source='vendor.username', read_only=True)
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
-    shop_type = serializers.CharField(source='shop.shop_type', read_only=True)
-    shop_logo_url = serializers.SerializerMethodField(read_only=True)
-    name = serializers.CharField(required=False)  # Allow 'name' as input
-    image_url = serializers.SerializerMethodField()  # Computed field for image URL
-    image = HybridImageField(required=False, allow_null=True)
-
+class UserMiniSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Product
-        fields = [
-            'id', 'title', 'name', 'description', 'price', 'image', 'image_url', 'category', 'stock', 'vendor', 'vendor_name', 'shop', 'shop_name', 'shop_type', 'shop_logo_url', 'is_active', 'created_at'
-        ]
-        read_only_fields = ['vendor', 'shop']
-        extra_kwargs = {
-            'title': {'required': False},
-            'name': {'write_only': True},
-            'image': {'required': False, 'allow_null': True},
-        }
-
-    def get_shop_logo_url(self, obj):
-        shop = getattr(obj, 'shop', None)
-        if not shop:
-            return None
-        request = self.context.get('request')
-        if shop.logo:
-            return request.build_absolute_uri(shop.logo.url) if request else shop.logo.url
-        owner = getattr(shop, 'owner', None) or getattr(shop, 'vendor', None)
-        owner_logo = getattr(owner, 'logo', None) if owner else None
-        if owner_logo:
-            return request.build_absolute_uri(owner_logo.url) if request else owner_logo.url
-        return None
-
-    def get_image_url(self, obj):
-        if obj.image:
-            request = self.context.get('request')
-            if request:
-                return request.build_absolute_uri(obj.image.url)
-            return obj.image.url
-        return None
-
-    def validate(self, data):
-        # Ensure either 'title' or 'name' is provided
-        if not data.get('title') and not data.get('name'):
-            raise serializers.ValidationError("Either 'title' or 'name' field is required.")
-        return data
-
-    def create(self, validated_data):
-        # Map 'name' to 'title' if 'title' is not provided
-        if not validated_data.get('title') and validated_data.get('name'):
-            validated_data['title'] = validated_data.pop('name')
-        return super().create(validated_data)
-
-
-class OrderItemSerializer(serializers.ModelSerializer):
-    product_title = serializers.CharField(source='product.title', read_only=True)
-
-    class Meta:
-        model = OrderItem
-        fields = ['id', 'product', 'product_title', 'quantity', 'price']
-        read_only_fields = ['price']  # price is computed from the product at creation time
-
+        model = User
+        fields = ['id', 'username', 'company_name']
 
 class ShopSerializer(serializers.ModelSerializer):
+    owner = UserMiniSerializer(read_only=True)
     logo_url = serializers.SerializerMethodField()
-    products = ProductSerializer(many=True, read_only=True)
-    shop_type = serializers.CharField(read_only=True)
-    logo = HybridImageField(required=False, allow_null=True)
+    products = serializers.SerializerMethodField()
 
     class Meta:
         model = Shop
-        fields = ['id', 'name', 'logo', 'logo_url', 'company_name', 'shop_type', 'products']
+        fields = ['id', 'name', 'company_name', 'logo_url', 'owner', 'products']
+
+    def get_products(self, obj):
+        # Expose vendor products attached to this shop
+        from .models import Product
+        prods = obj.products.all().select_related('vendor', 'shop')
+        return ProductSerializer(prods, many=True, context=self.context).data
 
     def get_logo_url(self, obj):
         request = self.context.get('request')
-        # Prefer explicit shop logo
-        if obj.logo:
-            return request.build_absolute_uri(obj.logo.url) if request else obj.logo.url
-        # Fallback: use owner's profile logo if available
-        owner = getattr(obj, 'owner', None) or getattr(obj, 'vendor', None)
-        owner_logo = getattr(owner, 'logo', None) if owner else None
-        if owner_logo:
-            return request.build_absolute_uri(owner_logo.url) if request else owner_logo.url
+        if obj.logo and hasattr(obj.logo, 'url'):
+            url = obj.logo.url
+            return request.build_absolute_uri(url) if request else url
         return None
 
+class ProductSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+    vendor_name = serializers.CharField(source='vendor.username', read_only=True)
+    shop_name = serializers.CharField(source='shop.name', read_only=True)
+    shop_logo_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Product
+        fields = ['id', 'title', 'description', 'price', 'image_url', 'category', 'stock', 'vendor_name', 'shop_name', 'shop_logo_url']
+
+    def get_image_url(self, obj):
+        request = self.context.get('request')
+        if obj.image and hasattr(obj.image, 'url'):
+            url = obj.image.url
+            return request.build_absolute_uri(url) if request else url
+        return None
+
+    def get_shop_logo_url(self, obj):
+        request = self.context.get('request')
+        if obj.shop and obj.shop.logo and hasattr(obj.shop.logo, 'url'):
+            url = obj.shop.logo.url
+            return request.build_absolute_uri(url) if request else url
+        return None
+
+class ProductCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Product
+        fields = ['title', 'description', 'price', 'image', 'category', 'stock']
+
+class DropshipImportSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DropshipImport
+        fields = ['id', 'dropshipper', 'shop', 'product', 'created_at']
+        read_only_fields = ['dropshipper', 'shop', 'created_at']
+
+class OrderItemInputSerializer(serializers.Serializer):
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.all())
+    quantity = serializers.IntegerField(min_value=1)
 
 class OrderSerializer(serializers.ModelSerializer):
-    items = OrderItemSerializer(many=True)
-    dropshipper_shop_name = serializers.CharField(source='dropshipper_shop.name', read_only=True)
-    dropshipper_shop_logo_url = serializers.SerializerMethodField(read_only=True)
-    dropshipper_shop_owner_name = serializers.SerializerMethodField(read_only=True)
-
-    # Customer fields unified for convenience in frontend
-    customer_name = serializers.SerializerMethodField(read_only=True)
-    customer_email = serializers.SerializerMethodField(read_only=True)
-    customer_phone = serializers.SerializerMethodField(read_only=True)
-    customer_address = serializers.SerializerMethodField(read_only=True)
+    items = OrderItemInputSerializer(many=True)
+    total_amount = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Order
         fields = [
-            'id', 'user', 'guest_name', 'guest_email', 'guest_phone', 'guest_address',
-            'shipping_phone', 'shipping_address', 'dropshipper_shop', 'dropshipper_shop_name', 'dropshipper_shop_logo_url', 'dropshipper_shop_owner_name',
-            'status', 'total_amount', 'created_at', 'items',
-            'customer_name', 'customer_email', 'customer_phone', 'customer_address'
+            'id', 'customer_name', 'customer_email', 'customer_phone', 'customer_address',
+            'shipping_phone', 'shipping_address', 'dropshipper_shop', 'items', 'status', 'created_at',
+            'dropshipper_shop_name'
         ]
-        read_only_fields = ['user', 'total_amount', 'status', 'created_at']
+        read_only_fields = ['status', 'created_at']
 
-    def get_dropshipper_shop_logo_url(self, obj):
-        shop = getattr(obj, 'dropshipper_shop', None)
-        if not shop:
-            return None
-        request = self.context.get('request')
-        if shop.logo:
-            return request.build_absolute_uri(shop.logo.url) if request else shop.logo.url
-        owner = getattr(shop, 'owner', None) or getattr(shop, 'vendor', None)
-        owner_logo = getattr(owner, 'logo', None) if owner else None
-        if owner_logo:
-            return request.build_absolute_uri(owner_logo.url) if request else owner_logo.url
-        return None
-
-    def get_dropshipper_shop_owner_name(self, obj):
-        shop = getattr(obj, 'dropshipper_shop', None)
-        if not shop:
-            return None
-        owner = getattr(shop, 'owner', None) or getattr(shop, 'vendor', None)
-        if owner:
-            # prefer company_name then username
-            name = getattr(owner, 'company_name', None) or getattr(owner, 'username', None)
-            return name
-        return None
-
-    def get_customer_name(self, obj):
-        return obj.guest_name or getattr(obj.user, 'username', '') if obj.user_id else obj.guest_name
-
-    def get_customer_email(self, obj):
-        return obj.guest_email or getattr(obj.user, 'email', '') if obj.user_id else obj.guest_email
-
-    def get_customer_phone(self, obj):
-        return obj.shipping_phone or obj.guest_phone
-
-    def get_customer_address(self, obj):
-        return obj.shipping_address or obj.guest_address
-
-    def validate_items(self, value):
-        if not value:
-            raise serializers.ValidationError("At least one item is required.")
-        for item in value:
-            qty = item.get('quantity', 1)
-            if qty is None or int(qty) < 1:
-                raise serializers.ValidationError("Quantity must be at least 1 for all items.")
-        return value
+    def get_total_amount(self, obj):
+        return sum([float(i.price) * i.quantity for i in obj.items.all()])
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
-        user = self.context['request'].user if 'request' in self.context else None
-        order = Order.objects.create(user=user if user and user.is_authenticated else None, **validated_data)
-        total = 0
+        dropshipper_shop = validated_data.get('dropshipper_shop')
+        if dropshipper_shop:
+            validated_data['dropshipper_shop_name'] = dropshipper_shop.name
+        order = Order.objects.create(**validated_data)
         for item in items_data:
-            # item['product'] will already be a Product instance thanks to PKRelatedField
-            product = item['product'] if isinstance(item['product'], Product) else Product.objects.get(pk=item['product'])
-            quantity = int(item.get('quantity', 1))
-            price = product.price
-            OrderItem.objects.create(order=order, product=product, quantity=quantity, price=price)
-            total += price * quantity
-        order.total_amount = total
-        order.save()
+            product = item['product']
+            OrderItem.objects.create(
+                order=order,
+                product=product,
+                product_title=product.title,
+                quantity=item['quantity'],
+                price=product.price,
+                vendor=product.vendor,
+            )
         return order
 
-class CartItemSerializer(serializers.ModelSerializer):
-    product_title = serializers.CharField(source='product.title', read_only=True)
-    price = serializers.DecimalField(source='product.price', max_digits=10, decimal_places=2, read_only=True)
+class OrderListSerializer(serializers.ModelSerializer):
+    items = serializers.SerializerMethodField()
+    total_amount = serializers.SerializerMethodField()
 
     class Meta:
-        model = CartItem
-        fields = ['id', 'product', 'product_title', 'quantity', 'price']
+        model = Order
+        fields = [
+            'id', 'status', 'total_amount', 'created_at',
+            'customer_name', 'customer_email', 'customer_phone', 'customer_address',
+            'dropshipper_shop', 'dropshipper_shop_name', 'items'
+        ]
 
-class CartSerializer(serializers.ModelSerializer):
-    items = CartItemSerializer(many=True, read_only=True)
+    def get_items(self, obj):
+        return [
+            {
+                'id': i.id,
+                'product': i.product_id,
+                'product_title': i.product_title,
+                'quantity': i.quantity,
+                'price': str(i.price),
+            }
+            for i in obj.items.all()
+        ]
 
-    class Meta:
-        model = Cart
-        fields = ['id', 'items']
+    def get_total_amount(self, obj):
+        return str(sum([i.price * i.quantity for i in obj.items.all()]))

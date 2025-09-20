@@ -1,97 +1,88 @@
 from django.db import models
 from django.conf import settings
 
-
-
-# Shop model
-class Shop(models.Model):
-    class Type(models.TextChoices):
-        VENDOR = 'vendor', 'Vendor'
-        DROPSHIPPER = 'dropshipper', 'Dropshipper'
-
-    name = models.CharField(max_length=255)
-    logo = models.ImageField(upload_to='shops/', blank=True, null=True)
-    company_name = models.CharField(max_length=255, blank=True)
-
-    # Owner of the shop (vendor for vendor shops, dropshipper for dropshipper shops)
-    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='owned_shops', null=True, blank=True)
-    # Backward-compatible field for existing vendor shops
-    vendor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='shops')
-
-    shop_type = models.CharField(max_length=20, choices=Type.choices, default=Type.VENDOR)
-
-    def __str__(self):
-        return self.name
-
 User = settings.AUTH_USER_MODEL
 
+class Shop(models.Model):
+    owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='shops')
+    name = models.CharField(max_length=255)
+    company_name = models.CharField(max_length=255, blank=True)
+    logo = models.ImageField(upload_to='shop_logos/', blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.name} (owner={self.owner})"
+
+    @property
+    def logo_url(self):
+        if self.logo and hasattr(self.logo, 'url'):
+            return self.logo.url
+        return None
+
 class Product(models.Model):
+    vendor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='products')
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='products', null=True, blank=True)
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     image = models.ImageField(upload_to='products/', blank=True, null=True)
     category = models.CharField(max_length=100, blank=True)
     stock = models.IntegerField(default=0)
-    vendor = models.ForeignKey(User, on_delete=models.CASCADE, related_name='products')
-    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='products', null=True, blank=True)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.title
 
-class Order(models.Model):
-    class Status(models.TextChoices):
-        PENDING = 'pending', 'Pending'
-        PROCESSING = 'processing', 'Processing'
-        SHIPPED = 'shipped', 'Shipped'
-        COMPLETED = 'completed', 'Completed'
-        CANCELED = 'canceled', 'Canceled'
+    @property
+    def image_url(self):
+        if self.image and hasattr(self.image, 'url'):
+            return self.image.url
+        return None
 
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
-    # Guest checkout fields when user is None
-    guest_name = models.CharField(max_length=255, blank=True)
-    guest_email = models.EmailField(blank=True)
-    guest_phone = models.CharField(max_length=20, blank=True)
-    guest_address = models.TextField(blank=True)
-
-    # Attribution: which dropshipper shop the order came from (if applicable)
-    dropshipper_shop = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
-
-    # Shipping/contact fields to always include for vendors/dropshippers
-    shipping_phone = models.CharField(max_length=20, blank=True)
-    shipping_address = models.TextField(blank=True)
-
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
-    total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+class DropshipImport(models.Model):
+    dropshipper = models.ForeignKey(User, on_delete=models.CASCADE, related_name='imports')
+    shop = models.ForeignKey(Shop, on_delete=models.CASCADE, related_name='imports')
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='imported_records')
     created_at = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self):
-        return f"Order #{self.id}"
+    class Meta:
+        unique_together = ('dropshipper', 'shop', 'product')
+
+class Order(models.Model):
+    STATUS_CHOICES = (
+        ('pending', 'Pending'),
+        ('completed', 'Completed'),
+    )
+    customer_name = models.CharField(max_length=255)
+    customer_email = models.EmailField()
+    customer_phone = models.CharField(max_length=50)
+    customer_address = models.TextField()
+
+    shipping_phone = models.CharField(max_length=50, blank=True)
+    shipping_address = models.TextField(blank=True)
+
+    dropshipper_shop = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
+
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Attribution fields for convenience in reporting
+    dropshipper_shop_name = models.CharField(max_length=255, blank=True, null=True)
+    dropshipper_shop_logo = models.ImageField(upload_to='order_shop_logos/', blank=True, null=True)
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
-    quantity = models.PositiveIntegerField(default=1)
-    price = models.DecimalField(max_digits=10, decimal_places=2)  # snapshot price
+    product_title = models.CharField(max_length=255)
+    quantity = models.PositiveIntegerField()
+    price = models.DecimalField(max_digits=10, decimal_places=2)
 
-    def __str__(self):
-        return f"{self.product.title} x {self.quantity}"
+    vendor = models.ForeignKey(User, on_delete=models.PROTECT, related_name='order_items')
 
-class Cart(models.Model):
-    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='cart')
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    def __str__(self):
-        return f"Cart of {getattr(self.user, 'username', self.user_id)}"
-
-class CartItem(models.Model):
-    cart = models.ForeignKey(Cart, on_delete=models.CASCADE, related_name='items')
-    product = models.ForeignKey(Product, on_delete=models.CASCADE)
-    quantity = models.PositiveIntegerField(default=1)
-
-    class Meta:
-        unique_together = ('cart', 'product')
-
-    def __str__(self):
-        return f"{self.product.title} x {self.quantity}"
+    def save(self, *args, **kwargs):
+        # snapshot product title and vendor at time of ordering
+        if not self.product_title:
+            self.product_title = self.product.title
+        if not self.price:
+            self.price = self.product.price
+        if not self.vendor_id:
+            self.vendor = self.product.vendor
+        super().save(*args, **kwargs)
