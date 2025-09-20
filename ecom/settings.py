@@ -53,31 +53,21 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'ecom.wsgi.application'
 
-# Database: Render PostgreSQL via env vars
+# Database via dj-database-url (Render/Heroku style)
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME', 'myshopdb'),
-        'USER': os.getenv('DB_USER', 'myshopuser'),
-        'PASSWORD': os.getenv('DB_PASSWORD', 'mypassword'),
-        'HOST': os.getenv('DB_HOST', 'dpg-xxxxxxx.render.com'),
-        'PORT': '5432',
-    }
+    "default": dj_database_url.config(
+        default=os.getenv("DATABASE_URL"),
+        conn_max_age=600,
+        ssl_require=True,
+    )
 }
 
-# Allow DATABASE_URL override (e.g., Render External Database URL) and enforce SSL when used
-DATABASE_URL = os.getenv('DATABASE_URL')
-if DATABASE_URL:
-    DATABASES['default'] = dj_database_url.parse(
-        DATABASE_URL,
-        conn_max_age=600,
-        ssl_require=True
-    )
-else:
-    # If using field-by-field env vars with a Render host, enforce SSL
-    host = DATABASES['default'].get('HOST', '')
-    if 'render.com' in host:
-        DATABASES['default'].setdefault('OPTIONS', {})['sslmode'] = 'require'
+# Local dev fallback: if no DATABASE_URL and DEBUG, use SQLite
+if DEBUG and not os.getenv("DATABASE_URL"):
+    DATABASES["default"] = {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
+    }
 
 AUTH_USER_MODEL = 'accounts.User'
 

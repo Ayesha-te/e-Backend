@@ -38,7 +38,7 @@ class ProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = ['id', 'title', 'description', 'price', 'image_url', 'category', 'stock', 'shop_name', 'shop_logo_url']
+        fields = ['id', 'title', 'description', 'price', 'image_url', 'category', 'stock', 'is_active', 'shop_name', 'shop_logo_url']
 
     def get_image_url(self, obj):
         request = self.context.get('request')
@@ -57,10 +57,11 @@ class ProductSerializer(serializers.ModelSerializer):
 class ProductCreateSerializer(serializers.ModelSerializer):
     # Allow product creation without an image; accept 'file' alias as well
     image = serializers.ImageField(required=False, allow_null=True)
+    is_active = serializers.BooleanField(required=False, default=True)
 
     class Meta:
         model = Product
-        fields = ['title', 'description', 'price', 'image', 'category', 'stock']
+        fields = ['title', 'description', 'price', 'image', 'category', 'stock', 'is_active']
 
     def to_internal_value(self, data):
         # If client sent 'file' instead of 'image', map it
