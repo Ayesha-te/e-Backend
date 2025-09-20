@@ -85,26 +85,22 @@ class ProductViewSet(viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        # Determine shop type based on user role
+        # Always create vendor products in vendor shops only
         user_role = getattr(self.request.user, 'role', None)
         if user_role == 'vendor':
-            shop_type = Shop.Type.VENDOR
-        elif user_role == 'dropshipper':
-            shop_type = Shop.Type.DROPSHIPPER
+            shop = Shop.objects.filter(vendor=self.request.user, shop_type=Shop.Type.VENDOR).first()
+            if not shop:
+                shop = Shop.objects.create(
+                    vendor=self.request.user,
+                    owner=self.request.user,
+                    shop_type=Shop.Type.VENDOR,
+                    name=getattr(self.request.user, 'company_name', None) or f"{self.request.user.username}'s Shop",
+                    company_name=getattr(self.request.user, 'company_name', '') or '',
+                )
+            serializer.save(vendor=self.request.user, shop=shop)
         else:
-            shop_type = Shop.Type.VENDOR  # default
-
-        # Ensure the product is linked to the user and their appropriate shop
-        shop = Shop.objects.filter(owner=self.request.user, shop_type=shop_type).first()
-        if not shop:
-            shop = Shop.objects.create(
-                vendor=self.request.user,
-                owner=self.request.user,
-                shop_type=shop_type,
-                name=getattr(self.request.user, 'company_name', None) or f"{self.request.user.username}'s Shop",
-                company_name=getattr(self.request.user, 'company_name', '') or '',
-            )
-        serializer.save(vendor=self.request.user, shop=shop)
+            # For dropshipper or other roles, fallback to default (should not happen via UI)
+            serializer.save(vendor=self.request.user)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -118,12 +114,13 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def my_products(self, request):
-        # Vendor: their own products; Dropshipper: products in their own shop
+        # Vendor: their own products; Dropshipper: only imported products in their own shop
         user = request.user
         if getattr(user, 'role', None) == 'dropshipper':
-            products = Product.objects.filter(shop__owner=user)
+            # Only show products in dropshipper's own shop (imported)
+            products = Product.objects.filter(shop__owner=user, shop__shop_type=Shop.Type.DROPSHIPPER)
         else:
-            products = Product.objects.filter(vendor=user)
+            products = Product.objects.filter(vendor=user, shop__shop_type=Shop.Type.VENDOR)
         serializer = self.get_serializer(products, many=True)
         return Response(serializer.data)
 
