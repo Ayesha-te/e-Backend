@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -62,6 +63,20 @@ DATABASES = {
         'PORT': '5432',
     }
 }
+
+# Allow DATABASE_URL override (e.g., Render External Database URL) and enforce SSL when used
+DATABASE_URL = os.getenv('DATABASE_URL')
+if DATABASE_URL:
+    DATABASES['default'] = dj_database_url.parse(
+        DATABASE_URL,
+        conn_max_age=600,
+        ssl_require=True
+    )
+else:
+    # If using field-by-field env vars with a Render host, enforce SSL
+    host = DATABASES['default'].get('HOST', '')
+    if 'render.com' in host:
+        DATABASES['default'].setdefault('OPTIONS', {})['sslmode'] = 'require'
 
 AUTH_USER_MODEL = 'accounts.User'
 
