@@ -25,25 +25,30 @@ class SignupSerializer(serializers.ModelSerializer):
             user.logo = logo
         user.save()
 
-        # Automatically create a Shop for every new user (customer, vendor, dropshipper)
-        # Name preference: company_name or "<username>'s Shop"
-        try:
-            from shop.models import Shop  # Local import to avoid circular imports at module load
-            default_name = user.company_name or f"{user.username}'s Shop"
-            shop, _ = Shop.objects.get_or_create(
-                vendor=user,
-                defaults={
-                    'name': default_name,
-                    'company_name': user.company_name or '',
-                },
-            )
-            # If user uploaded a logo but shop has none, copy it to shop for immediate use
-            if logo and not getattr(shop, 'logo', None):
-                shop.logo = user.logo
-                shop.save()
-        except Exception:
-            # Avoid breaking signup if shop creation has any issue
-            pass
+        # Automatically create a Shop for vendors and dropshippers
+        # Customers don't need shops
+        if user.role in ['vendor', 'dropshipper']:
+            try:
+                from shop.models import Shop  # Local import to avoid circular imports at module load
+                default_name = user.company_name or f"{user.username}'s Shop"
+                shop_type = Shop.Type.VENDOR if user.role == 'vendor' else Shop.Type.DROPSHIPPER
+                owner = user if user.role == 'dropshipper' else None
+                shop, _ = Shop.objects.get_or_create(
+                    vendor=user,
+                    defaults={
+                        'name': default_name,
+                        'company_name': user.company_name or '',
+                        'shop_type': shop_type,
+                        'owner': owner,
+                    },
+                )
+                # If user uploaded a logo but shop has none, copy it to shop for immediate use
+                if logo and not getattr(shop, 'logo', None):
+                    shop.logo = user.logo
+                    shop.save()
+            except Exception:
+                # Avoid breaking signup if shop creation has any issue
+                pass
 
         return user
 

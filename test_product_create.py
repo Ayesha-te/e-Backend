@@ -3,12 +3,12 @@ import json
 
 BASE_URL = "http://127.0.0.1:8000/api"
 
-# Step 1: Signup as vendor
+# Step 1: Signup as dropshipper
 signup_data = {
-    "username": "testvendor",
+    "username": "testdropshipper",
     "email": "test@example.com",
     "password": "testpass123",
-    "role": "vendor",
+    "role": "dropshipper",
     "company_name": "Test Shop"
 }
 
@@ -17,7 +17,7 @@ print("Signup response:", response.status_code, response.json())
 
 # Step 2: Login to get token
 login_data = {
-    "username": "testvendor",
+    "username": "testdropshipper",
     "password": "testpass123"
 }
 

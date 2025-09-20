@@ -45,7 +45,7 @@ class IsVendor(permissions.BasePermission):
         return (
             request.user and
             request.user.is_authenticated and
-            (getattr(request.user, 'role', None) in ['vendor', 'customer'] or request.user.is_superuser)
+            (getattr(request.user, 'role', None) in ['vendor', 'dropshipper'] or request.user.is_superuser)
         )
 
 class ProductViewSet(viewsets.ModelViewSet):
@@ -65,22 +65,42 @@ class ProductViewSet(viewsets.ModelViewSet):
         vendor_id = self.request.query_params.get('vendor')
         if vendor_id:
             qs = qs.filter(vendor_id=vendor_id)
-        # When listing, show only vendor products unless the user is a vendor
+        # When listing, show vendor products or user's own products if dropshipper
         if self.action == 'list':
             user = self.request.user
-            if not user.is_authenticated or getattr(user, 'role', None) != 'vendor':
+            if user.is_authenticated:
+                user_role = getattr(user, 'role', None)
+                if user_role == 'vendor':
+                    # Vendors see all, but can be filtered
+                    pass
+                elif user_role == 'dropshipper':
+                    # Dropshippers see their own products
+                    qs = qs.filter(shop__owner=user)
+                else:
+                    # Customers see vendor products
+                    qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
+            else:
+                # Anonymous users see vendor products
                 qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
         return qs
 
     def perform_create(self, serializer):
-        # Ensure the product is linked to the vendor and their VENDOR-type shop
-        # Avoid accidentally reusing a DROPSHIPPER shop that shares the same vendor FK
-        shop = Shop.objects.filter(vendor=self.request.user, shop_type=Shop.Type.VENDOR).first()
+        # Determine shop type based on user role
+        user_role = getattr(self.request.user, 'role', None)
+        if user_role == 'vendor':
+            shop_type = Shop.Type.VENDOR
+        elif user_role == 'dropshipper':
+            shop_type = Shop.Type.DROPSHIPPER
+        else:
+            shop_type = Shop.Type.VENDOR  # default
+
+        # Ensure the product is linked to the user and their appropriate shop
+        shop = Shop.objects.filter(owner=self.request.user, shop_type=shop_type).first()
         if not shop:
             shop = Shop.objects.create(
                 vendor=self.request.user,
                 owner=self.request.user,
-                shop_type=Shop.Type.VENDOR,
+                shop_type=shop_type,
                 name=getattr(self.request.user, 'company_name', None) or f"{self.request.user.username}'s Shop",
                 company_name=getattr(self.request.user, 'company_name', '') or '',
             )
