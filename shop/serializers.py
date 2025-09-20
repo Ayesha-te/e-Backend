@@ -33,7 +33,6 @@ class ShopSerializer(serializers.ModelSerializer):
 
 class ProductSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
-    vendor_name = serializers.CharField(source='vendor.username', read_only=True)
     shop_name = serializers.CharField(source='shop.name', read_only=True)
     shop_logo_url = serializers.SerializerMethodField()
 
