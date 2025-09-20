@@ -74,8 +74,8 @@ class ProductViewSet(viewsets.ModelViewSet):
                     # Vendors see all, but can be filtered
                     pass
                 elif user_role == 'dropshipper':
-                    # Dropshippers see their own products
-                    qs = qs.filter(shop__owner=user)
+                    # Dropshippers see vendor products for importing
+                    qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
                 else:
                     # Customers see vendor products
                     qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
