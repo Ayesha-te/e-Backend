@@ -15,6 +15,5 @@ urlpatterns = [
     path('api/shop/', include('shop.urls')),
 ]
 
-# Serve media files during development
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serve media files during development and production (for small scale; consider cloud storage for larger deployments)
+urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
