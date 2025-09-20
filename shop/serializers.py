@@ -56,9 +56,20 @@ class ProductSerializer(serializers.ModelSerializer):
         return None
 
 class ProductCreateSerializer(serializers.ModelSerializer):
+    # Allow product creation without an image; accept 'file' alias as well
+    image = serializers.ImageField(required=False, allow_null=True)
+
     class Meta:
         model = Product
         fields = ['title', 'description', 'price', 'image', 'category', 'stock']
+
+    def to_internal_value(self, data):
+        # If client sent 'file' instead of 'image', map it
+        if 'image' not in data and 'file' in data:
+            mutable_data = data.copy()
+            mutable_data['image'] = mutable_data.get('file')
+            data = mutable_data
+        return super().to_internal_value(data)
 
 class DropshipImportSerializer(serializers.ModelSerializer):
     class Meta:

@@ -32,16 +32,35 @@ def my_shop(request):
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def update_my_shop(request):
+    from django.core.files.uploadedfile import UploadedFile
+
     shop, _ = Shop.objects.get_or_create(owner=request.user)
     name = request.data.get('name')
     company_name = request.data.get('company_name')
-    logo = request.data.get('logo') or request.FILES.get('logo')
+
+    # Accept only actual files for 'logo'; allow clearing via null/empty values
+    # Support common field names: 'logo', 'image', or 'file'
+    logo_file = (
+        request.FILES.get('logo')
+        or request.FILES.get('image')
+        or request.FILES.get('file')
+    )
+    logo_raw = request.data.get('logo', None)
+
     if name is not None:
         shop.name = name
     if company_name is not None:
         shop.company_name = company_name
-    if logo is not None:
-        shop.logo = logo
+
+    if isinstance(logo_file, UploadedFile):
+        shop.logo = logo_file
+    elif 'logo' in request.data and (logo_raw in [None, '', 'null']):
+        # Explicitly clear existing logo
+        if shop.logo:
+            shop.logo.delete(save=False)
+        shop.logo = None
+    # If 'logo' is a non-file string (e.g., URL/empty), ignore to avoid errors
+
     shop.save()
     return Response(ShopSerializer(shop, context={'request': request}).data)
 
