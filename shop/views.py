@@ -1,4 +1,4 @@
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions, status, serializers
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
 from django.db.models import Q
@@ -23,46 +23,55 @@ class ShopListView(generics.ListAPIView):
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def my_shop(request):
-    shop, _ = Shop.objects.get_or_create(owner=request.user, defaults={
-        'name': request.user.company_name or f"{request.user.username}'s Shop",
-        'company_name': request.user.company_name or '',
-    })
-    return Response(ShopSerializer(shop, context={'request': request}).data)
+    try:
+        shop, _ = Shop.objects.get_or_create(owner=request.user, defaults={
+            'name': request.user.company_name or f"{request.user.username}'s Shop",
+            'company_name': request.user.company_name or '',
+            'shop_type': 'dropshipper' if request.user.role == 'dropshipper' else 'vendor',
+        })
+        return Response(ShopSerializer(shop, context={'request': request}).data)
+    except Exception as e:
+        return Response({'detail': 'Failed to retrieve shop information'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def update_my_shop(request):
     from django.core.files.uploadedfile import UploadedFile
 
-    shop, _ = Shop.objects.get_or_create(owner=request.user)
-    name = request.data.get('name')
-    company_name = request.data.get('company_name')
+    try:
+        shop, _ = Shop.objects.get_or_create(owner=request.user, defaults={
+            'shop_type': 'dropshipper' if request.user.role == 'dropshipper' else 'vendor',
+        })
+        name = request.data.get('name')
+        company_name = request.data.get('company_name')
 
-    # Accept only actual files for 'logo'; allow clearing via null/empty values
-    # Support common field names: 'logo', 'image', or 'file'
-    logo_file = (
-        request.FILES.get('logo')
-        or request.FILES.get('image')
-        or request.FILES.get('file')
-    )
-    logo_raw = request.data.get('logo', None)
+        # Accept only actual files for 'logo'; allow clearing via null/empty values
+        # Support common field names: 'logo', 'image', or 'file'
+        logo_file = (
+            request.FILES.get('logo')
+            or request.FILES.get('image')
+            or request.FILES.get('file')
+        )
+        logo_raw = request.data.get('logo', None)
 
-    if name is not None:
-        shop.name = name
-    if company_name is not None:
-        shop.company_name = company_name
+        if name is not None:
+            shop.name = name
+        if company_name is not None:
+            shop.company_name = company_name
 
-    if isinstance(logo_file, UploadedFile):
-        shop.logo = logo_file
-    elif 'logo' in request.data and (logo_raw in [None, '', 'null']):
-        # Explicitly clear existing logo
-        if shop.logo:
-            shop.logo.delete(save=False)
-        shop.logo = None
-    # If 'logo' is a non-file string (e.g., URL/empty), ignore to avoid errors
+        if isinstance(logo_file, UploadedFile):
+            shop.logo = logo_file
+        elif 'logo' in request.data and (logo_raw in [None, '', 'null']):
+            # Explicitly clear existing logo
+            if shop.logo:
+                shop.logo.delete(save=False)
+            shop.logo = None
+        # If 'logo' is a non-file string (e.g., URL/empty), ignore to avoid errors
 
-    shop.save()
-    return Response(ShopSerializer(shop, context={'request': request}).data)
+        shop.save()
+        return Response(ShopSerializer(shop, context={'request': request}).data)
+    except Exception as e:
+        return Response({'detail': 'Failed to update shop'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # Products
 class ProductListView(generics.ListAPIView):
@@ -81,35 +90,73 @@ class MyProductsView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Product.objects.filter(vendor=self.request.user).select_related('vendor', 'shop').order_by('-id')
+        user = self.request.user
+        
+        # For vendors: show products they created
+        if user.role == 'vendor':
+            return Product.objects.filter(vendor=user).select_related('vendor', 'shop').order_by('-id')
+        
+        # For dropshippers: show products they imported
+        elif user.role == 'dropshipper':
+            # Get products that this dropshipper has imported
+            imported_product_ids = DropshipImport.objects.filter(
+                dropshipper=user
+            ).values_list('product_id', flat=True)
+            
+            return Product.objects.filter(
+                id__in=imported_product_ids
+            ).select_related('vendor', 'shop').order_by('-id')
+        
+        # Default: empty queryset for other roles
+        return Product.objects.none()
 
 class CreateProductView(generics.CreateAPIView):
     serializer_class = ProductCreateSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def perform_create(self, serializer):
-        # Attach product to the authenticated user; avoid creating Shop to prevent DB constraint issues
-        # Use existing shop if present; else, proceed without a shop (Product.shop is nullable)
-        shop = Shop.objects.filter(owner=self.request.user).first()
-        serializer.save(vendor=self.request.user, shop=shop)
+        try:
+            # Attach product to the authenticated user; avoid creating Shop to prevent DB constraint issues
+            # Use existing shop if present; else, proceed without a shop (Product.shop is nullable)
+            shop = Shop.objects.filter(owner=self.request.user).first()
+            serializer.save(vendor=self.request.user, shop=shop)
+        except Exception as e:
+            raise serializers.ValidationError({'detail': 'Failed to create product'})
 
 # Dropshipper import
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])
 def import_to_my_shop(request, pk: int):
-    # Only dropshipper shops are considered for viewing in dropshipper dashboard
-    # Create or get dropshipper shop for current user
-    shop, _ = Shop.objects.get_or_create(owner=request.user, defaults={
-        'name': request.user.company_name or f"{request.user.username}'s Shop",
-        'company_name': request.user.company_name or '',
-    })
     try:
-        product = Product.objects.get(pk=pk)
-    except Product.DoesNotExist:
-        return Response({'detail': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
+        # Only dropshipper shops are considered for viewing in dropshipper dashboard
+        # Create or get dropshipper shop for current user
+        shop, _ = Shop.objects.get_or_create(owner=request.user, defaults={
+            'name': request.user.company_name or f"{request.user.username}'s Shop",
+            'company_name': request.user.company_name or '',
+            'shop_type': 'dropshipper' if request.user.role == 'dropshipper' else 'vendor',
+        })
+        
+        try:
+            product = Product.objects.get(pk=pk)
+        except Product.DoesNotExist:
+            return Response({'detail': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
 
-    DropshipImport.objects.get_or_create(dropshipper=request.user, shop=shop, product=product)
-    return Response({'detail': 'Imported to your shop'})
+        # Check if product is already imported
+        existing_import = DropshipImport.objects.filter(
+            dropshipper=request.user, 
+            shop=shop, 
+            product=product
+        ).first()
+        
+        if existing_import:
+            return Response({'detail': 'Product already imported to your shop'}, status=status.HTTP_200_OK)
+        
+        # Create new import record
+        DropshipImport.objects.create(dropshipper=request.user, shop=shop, product=product)
+        return Response({'detail': 'Product imported to your shop successfully'}, status=status.HTTP_201_CREATED)
+        
+    except Exception as e:
+        return Response({'detail': 'Failed to import product'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 # Orders
 class CreateOrderView(generics.CreateAPIView):
@@ -121,15 +168,18 @@ class ListOrdersView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        user = self.request.user
-        # Vendors see orders that contain their products
-        if user.role == 'vendor':
-            return Order.objects.filter(items__vendor=user).distinct().order_by('-id')
-        # Dropshippers see orders made via their shop
-        if user.role == 'dropshipper':
-            return Order.objects.filter(dropshipper_shop__owner=user).order_by('-id')
-        # Fallback: empty for other roles
-        return Order.objects.none()
+        try:
+            user = self.request.user
+            # Vendors see orders that contain their products
+            if user.role == 'vendor':
+                return Order.objects.filter(items__vendor=user).distinct().order_by('-id')
+            # Dropshippers see orders made via their shop
+            if user.role == 'dropshipper':
+                return Order.objects.filter(dropshipper_shop__owner=user).order_by('-id')
+            # Fallback: empty for other roles
+            return Order.objects.none()
+        except Exception as e:
+            return Order.objects.none()
 
 @api_view(['PATCH'])
 @permission_classes([permissions.IsAuthenticated])

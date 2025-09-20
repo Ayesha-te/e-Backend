@@ -27,31 +27,52 @@ class ShopSerializer(serializers.ModelSerializer):
     def get_logo_url(self, obj):
         request = self.context.get('request')
         if obj.logo and hasattr(obj.logo, 'url'):
-            url = obj.logo.url
-            return request.build_absolute_uri(url) if request else url
+            # Check if file actually exists
+            try:
+                if obj.logo.storage.exists(obj.logo.name):
+                    url = obj.logo.url
+                    return request.build_absolute_uri(url) if request else url
+            except:
+                pass
         return None
 
 class ProductSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
     shop_name = serializers.CharField(source='shop.name', read_only=True)
     shop_logo_url = serializers.SerializerMethodField()
+    vendor_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
-        fields = ['id', 'title', 'description', 'price', 'image_url', 'category', 'stock', 'is_active', 'shop_name', 'shop_logo_url']
+        fields = ['id', 'title', 'description', 'price', 'image_url', 'category', 'stock', 'is_active', 'shop_name', 'shop_logo_url', 'vendor_name']
 
     def get_image_url(self, obj):
         request = self.context.get('request')
         if obj.image and hasattr(obj.image, 'url'):
-            url = obj.image.url
-            return request.build_absolute_uri(url) if request else url
+            # Check if file actually exists
+            try:
+                if obj.image.storage.exists(obj.image.name):
+                    url = obj.image.url
+                    return request.build_absolute_uri(url) if request else url
+            except:
+                pass
         return None
 
     def get_shop_logo_url(self, obj):
         request = self.context.get('request')
         if obj.shop and obj.shop.logo and hasattr(obj.shop.logo, 'url'):
-            url = obj.shop.logo.url
-            return request.build_absolute_uri(url) if request else url
+            # Check if file actually exists
+            try:
+                if obj.shop.logo.storage.exists(obj.shop.logo.name):
+                    url = obj.shop.logo.url
+                    return request.build_absolute_uri(url) if request else url
+            except:
+                pass
+        return None
+
+    def get_vendor_name(self, obj):
+        if obj.vendor:
+            return obj.vendor.company_name or obj.vendor.username
         return None
 
 class ProductCreateSerializer(serializers.ModelSerializer):
@@ -83,25 +104,61 @@ class OrderItemInputSerializer(serializers.Serializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     items = OrderItemInputSerializer(many=True)
-    total_amount = serializers.SerializerMethodField(read_only=True)
+    total_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    
+    # Make guest fields optional in the serializer since we'll handle them in validation
+    guest_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    guest_email = serializers.EmailField(required=False, allow_blank=True)
+    guest_phone = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    guest_address = serializers.CharField(required=False, allow_blank=True)
+    shipping_phone = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    shipping_address = serializers.CharField(required=False, allow_blank=True)
 
     class Meta:
         model = Order
         fields = [
             'id', 'customer_name', 'customer_email', 'customer_phone', 'customer_address',
+            'guest_name', 'guest_email', 'guest_phone', 'guest_address',
             'shipping_phone', 'shipping_address', 'dropshipper_shop', 'items', 'status', 'created_at',
-            'dropshipper_shop_name'
+            'dropshipper_shop_name', 'total_amount', 'user'
         ]
-        read_only_fields = ['status', 'created_at']
-
-    def get_total_amount(self, obj):
-        return sum([float(i.price) * i.quantity for i in obj.items.all()])
+        read_only_fields = ['status', 'created_at', 'total_amount']
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
+        
+        # Calculate total amount from items
+        total = sum([item['product'].price * item['quantity'] for item in items_data])
+        validated_data['total_amount'] = total
+        
+        # Set guest fields from customer fields if guest fields are empty
+        if not validated_data.get('guest_name'):
+            validated_data['guest_name'] = validated_data.get('customer_name', '')
+        if not validated_data.get('guest_email'):
+            validated_data['guest_email'] = validated_data.get('customer_email', '')
+        if not validated_data.get('guest_phone'):
+            validated_data['guest_phone'] = validated_data.get('customer_phone', '')
+        if not validated_data.get('guest_address'):
+            validated_data['guest_address'] = validated_data.get('customer_address', '')
+        
+        # Ensure required guest fields have values (database constraints)
+        if not validated_data.get('guest_name'):
+            validated_data['guest_name'] = 'Guest Customer'
+        if not validated_data.get('guest_email'):
+            validated_data['guest_email'] = 'guest@example.com'
+        if not validated_data.get('guest_phone'):
+            validated_data['guest_phone'] = 'N/A'
+        if not validated_data.get('guest_address'):
+            validated_data['guest_address'] = 'N/A'
+        if not validated_data.get('shipping_phone'):
+            validated_data['shipping_phone'] = validated_data.get('guest_phone', 'N/A')
+        if not validated_data.get('shipping_address'):
+            validated_data['shipping_address'] = validated_data.get('guest_address', 'N/A')
+        
         dropshipper_shop = validated_data.get('dropshipper_shop')
         if dropshipper_shop:
             validated_data['dropshipper_shop_name'] = dropshipper_shop.name
+            
         order = Order.objects.create(**validated_data)
         for item in items_data:
             product = item['product']
@@ -117,13 +174,13 @@ class OrderSerializer(serializers.ModelSerializer):
 
 class OrderListSerializer(serializers.ModelSerializer):
     items = serializers.SerializerMethodField()
-    total_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
         fields = [
             'id', 'status', 'total_amount', 'created_at',
             'customer_name', 'customer_email', 'customer_phone', 'customer_address',
+            'guest_name', 'guest_email', 'guest_phone', 'guest_address',
             'dropshipper_shop', 'dropshipper_shop_name', 'items'
         ]
 
@@ -138,6 +195,3 @@ class OrderListSerializer(serializers.ModelSerializer):
             }
             for i in obj.items.all()
         ]
-
-    def get_total_amount(self, obj):
-        return str(sum([i.price * i.quantity for i in obj.items.all()]))

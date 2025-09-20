@@ -1,8 +1,15 @@
 import os
 from pathlib import Path
 import dj_database_url
+from dotenv import load_dotenv
+
+# Load environment variables from backend/.env when running locally
+load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Ensure .env in backend is loaded regardless of working directory
+load_dotenv(dotenv_path=BASE_DIR / '.env')
 
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'dev-secret-key-change-me')
 DEBUG = os.getenv('DEBUG', 'true').lower() == 'true'

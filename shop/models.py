@@ -4,13 +4,19 @@ from django.conf import settings
 User = settings.AUTH_USER_MODEL
 
 class Shop(models.Model):
+    SHOP_TYPE_CHOICES = (
+        ('vendor', 'Vendor Shop'),
+        ('dropshipper', 'Dropshipper Shop'),
+    )
+    
     owner = models.ForeignKey(User, on_delete=models.CASCADE, related_name='shops')
     name = models.CharField(max_length=255)
     company_name = models.CharField(max_length=255, blank=True)
     logo = models.ImageField(upload_to='shop_logos/', blank=True, null=True)
+    shop_type = models.CharField(max_length=20, choices=SHOP_TYPE_CHOICES, default='vendor')
 
     def __str__(self):
-        return f"{self.name} (owner={self.owner})"
+        return f"{self.name} (owner={self.owner}, type={self.shop_type})"
 
     @property
     def logo_url(self):
@@ -56,22 +62,36 @@ class Order(models.Model):
         ('pending', 'Pending'),
         ('completed', 'Completed'),
     )
-    customer_name = models.CharField(max_length=255)
-    customer_email = models.EmailField()
-    customer_phone = models.CharField(max_length=50)
-    customer_address = models.TextField()
+    # Customer fields (main customer info) - can be empty, guest fields are used instead
+    customer_name = models.CharField(max_length=255, default='')
+    customer_email = models.EmailField(default='')
+    customer_phone = models.CharField(max_length=50, default='')
+    customer_address = models.TextField(default='')
 
-    shipping_phone = models.CharField(max_length=50, blank=True)
-    shipping_address = models.TextField(blank=True)
+    # Guest fields (primary customer info - required in database)
+    guest_name = models.CharField(max_length=255)
+    guest_email = models.EmailField()
+    guest_phone = models.CharField(max_length=50)
+    guest_address = models.TextField()
 
+    # Shipping info
+    shipping_phone = models.CharField(max_length=50)
+    shipping_address = models.TextField()
+
+    # User reference (for registered customers)
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
+
+    # Shop reference
     dropshipper_shop = models.ForeignKey(Shop, on_delete=models.SET_NULL, null=True, blank=True, related_name='orders')
 
+    # Order details
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    total_amount = models.DecimalField(max_digits=10, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
 
     # Attribution fields for convenience in reporting
     dropshipper_shop_name = models.CharField(max_length=255, blank=True, null=True)
-    dropshipper_shop_logo = models.ImageField(upload_to='order_shop_logos/', blank=True, null=True)
+    dropshipper_shop_logo = models.CharField(max_length=100, blank=True, null=True)  # Using CharField to match DB
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name='items')
