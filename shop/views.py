@@ -7,10 +7,17 @@ from .models import Product, Order, Shop, Cart, CartItem
 from .serializers import ProductSerializer, OrderSerializer, ShopSerializer, CartSerializer, CartItemSerializer
 # ShopViewSet for listing shops with logo and products
 class ShopViewSet(viewsets.ReadOnlyModelViewSet):
-    # Public listing should expose only dropshipper shops and their products
-    queryset = Shop.objects.filter(shop_type=Shop.Type.DROPSHIPPER).prefetch_related('products')
+    # Only show dropshipper's own shop in dropshipper dashboard
     serializer_class = ShopSerializer
     permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_authenticated and getattr(user, 'role', None) == 'dropshipper':
+            # Dropshipper sees only their own shop
+            return Shop.objects.filter(owner=user, shop_type=Shop.Type.DROPSHIPPER).prefetch_related('products')
+        # For others (public, vendor), return no shops or only dropshipper shops as needed
+        return Shop.objects.none()
 
     @action(detail=False, methods=['get', 'post'], permission_classes=[permissions.IsAuthenticated], parser_classes=[parsers.MultiPartParser, parsers.FormParser, parsers.JSONParser])
     def my_shop(self, request):
@@ -82,6 +89,9 @@ class ProductViewSet(viewsets.ModelViewSet):
             else:
                 # Anonymous users see vendor products
                 qs = qs.filter(shop__shop_type=Shop.Type.VENDOR)
+        # Debug: print SQL and count
+        print(f"[DEBUG] ProductViewSet.get_queryset SQL: {str(qs.query)}")
+        print(f"[DEBUG] ProductViewSet.get_queryset count: {qs.count()}")
         return qs
 
     def perform_create(self, serializer):
