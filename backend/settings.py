@@ -104,7 +104,7 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.FormParser',
     ),
 }
-
+#new
 # Reduce memory spikes from uploads: prefer temp files and limit in-memory sizes
 FILE_UPLOAD_HANDLERS = [
     'django.core.files.uploadhandler.TemporaryFileUploadHandler',
