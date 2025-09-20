@@ -58,10 +58,11 @@ class ProductSerializer(serializers.ModelSerializer):
 class ProductCreateSerializer(serializers.ModelSerializer):
     # Allow product creation without an image; accept 'file' alias as well
     image = serializers.ImageField(required=False, allow_null=True)
+    vendor = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), required=True, write_only=True)
 
     class Meta:
         model = Product
-        fields = ['title', 'description', 'price', 'image', 'category', 'stock']
+        fields = ['title', 'description', 'price', 'image', 'category', 'stock', 'vendor']
 
     def to_internal_value(self, data):
         # If client sent 'file' instead of 'image', map it
@@ -70,6 +71,13 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             mutable_data['image'] = mutable_data.get('file')
             data = mutable_data
         return super().to_internal_value(data)
+
+    def validate_vendor(self, value):
+        # Ensure users can only create products for themselves
+        request = self.context.get('request')
+        if request and request.user != value:
+            raise serializers.ValidationError('You can only create products for yourself.')
+        return value
 
 class DropshipImportSerializer(serializers.ModelSerializer):
     class Meta:

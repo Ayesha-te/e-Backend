@@ -88,12 +88,14 @@ class CreateProductView(generics.CreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def perform_create(self, serializer):
-        # Ensure a vendor has a shop to attach logo/name for dropshipper display
+        # Vendor must be provided in request body and must match the authenticated user
+        vendor = serializer.validated_data.get('vendor')
+        # Ensure the user has a shop to attach logo/name for display
         shop, _ = Shop.objects.get_or_create(owner=self.request.user, defaults={
             'name': self.request.user.company_name or f"{self.request.user.username}'s Shop",
             'company_name': self.request.user.company_name or '',
         })
-        serializer.save(vendor=self.request.user, shop=shop)
+        serializer.save(vendor=vendor, shop=shop)
 
 # Dropshipper import
 @api_view(['POST'])
