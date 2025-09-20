@@ -88,11 +88,9 @@ class CreateProductView(generics.CreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def perform_create(self, serializer):
-        # Attach product to the authenticated user and their shop
-        shop, _ = Shop.objects.get_or_create(owner=self.request.user, defaults={
-            'name': self.request.user.company_name or f"{self.request.user.username}'s Shop",
-            'company_name': self.request.user.company_name or '',
-        })
+        # Attach product to the authenticated user; avoid creating Shop to prevent DB constraint issues
+        # Use existing shop if present; else, proceed without a shop (Product.shop is nullable)
+        shop = Shop.objects.filter(owner=self.request.user).first()
         serializer.save(vendor=self.request.user, shop=shop)
 
 # Dropshipper import
