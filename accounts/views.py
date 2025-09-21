@@ -19,3 +19,8 @@ class VendorListView(generics.ListAPIView):
     queryset = User.objects.filter(role='vendor')
     serializer_class = UserSerializer
     permission_classes = [permissions.AllowAny]
+
+class DropshipperListView(generics.ListAPIView):
+    queryset = User.objects.filter(role='dropshipper')
+    serializer_class = UserSerializer
+    permission_classes = [permissions.AllowAny]

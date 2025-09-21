@@ -38,7 +38,7 @@ class ShopSerializer(serializers.ModelSerializer):
 
 class ProductSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
-    shop_name = serializers.CharField(source='shop.name', read_only=True)
+    shop_name = serializers.SerializerMethodField()
     shop_logo_url = serializers.SerializerMethodField()
     vendor_name = serializers.SerializerMethodField()
 
@@ -58,8 +58,38 @@ class ProductSerializer(serializers.ModelSerializer):
                 pass
         return None
 
+    def get_shop_name(self, obj):
+        # Check if we have a dropshipper context for this product
+        dropshipper_user = self.context.get('dropshipper_user')
+        if dropshipper_user:
+            # Try to get the dropshipper's shop
+            try:
+                dropshipper_shop = Shop.objects.filter(owner=dropshipper_user, shop_type='dropshipper').first()
+                if dropshipper_shop:
+                    return dropshipper_shop.name
+            except:
+                pass
+        
+        # Fallback to original vendor shop
+        return obj.shop.name if obj.shop else None
+
     def get_shop_logo_url(self, obj):
         request = self.context.get('request')
+        
+        # Check if we have a dropshipper context for this product
+        dropshipper_user = self.context.get('dropshipper_user')
+        if dropshipper_user:
+            # Try to get the dropshipper's shop logo
+            try:
+                dropshipper_shop = Shop.objects.filter(owner=dropshipper_user, shop_type='dropshipper').first()
+                if dropshipper_shop and dropshipper_shop.logo and hasattr(dropshipper_shop.logo, 'url'):
+                    if dropshipper_shop.logo.storage.exists(dropshipper_shop.logo.name):
+                        url = dropshipper_shop.logo.url
+                        return request.build_absolute_uri(url) if request else url
+            except:
+                pass
+        
+        # Fallback to original vendor shop logo
         if obj.shop and obj.shop.logo and hasattr(obj.shop.logo, 'url'):
             # Check if file actually exists
             try:
@@ -130,6 +160,18 @@ class OrderSerializer(serializers.ModelSerializer):
         # Calculate total amount from items
         total = sum([item['product'].price * item['quantity'] for item in items_data])
         validated_data['total_amount'] = total
+        
+        # Auto-detect dropshipper shop if not explicitly set
+        if not validated_data.get('dropshipper_shop'):
+            # Check if any of the products being ordered have been imported by dropshippers
+            product_ids = [item['product'].id for item in items_data]
+            dropship_imports = DropshipImport.objects.filter(product_id__in=product_ids).select_related('shop')
+            
+            if dropship_imports.exists():
+                # If there are imports, use the first dropshipper shop found
+                # In a real system, you'd want the frontend to specify which dropshipper context
+                first_import = dropship_imports.first()
+                validated_data['dropshipper_shop'] = first_import.shop
         
         # Set guest fields from customer fields if guest fields are empty
         if not validated_data.get('guest_name'):

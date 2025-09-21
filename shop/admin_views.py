@@ -42,6 +42,15 @@ def clear_database_admin(request):
         # Clear data in correct order (respecting foreign key constraints)
         deleted_counts = {}
         
+        # Clear any cart data first (if exists) using raw SQL
+        from django.db import connection
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("DELETE FROM shop_cart WHERE 1=1")
+                deleted_counts['carts'] = cursor.rowcount
+        except Exception:
+            deleted_counts['carts'] = 0  # Table might not exist
+        
         # 1. Clear order items first
         deleted_counts['order_items'] = OrderItem.objects.all().delete()[0]
         

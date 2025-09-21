@@ -80,10 +80,36 @@ class ProductListView(generics.ListAPIView):
 
     def get_queryset(self):
         vendor_id = self.request.query_params.get('vendor')
+        dropshipper_id = self.request.query_params.get('dropshipper')
+        
         qs = Product.objects.select_related('vendor', 'shop')
+        
         if vendor_id:
             qs = qs.filter(vendor_id=vendor_id)
+        elif dropshipper_id:
+            # Get products imported by this dropshipper
+            imported_product_ids = DropshipImport.objects.filter(
+                dropshipper_id=dropshipper_id
+            ).values_list('product_id', flat=True)
+            qs = qs.filter(id__in=imported_product_ids)
+        
         return qs.order_by('-id')
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        
+        # If browsing by dropshipper, add dropshipper context
+        dropshipper_id = self.request.query_params.get('dropshipper')
+        if dropshipper_id:
+            try:
+                from django.contrib.auth import get_user_model
+                User = get_user_model()
+                dropshipper_user = User.objects.get(id=dropshipper_id, role='dropshipper')
+                context['dropshipper_user'] = dropshipper_user
+            except User.DoesNotExist:
+                pass
+        
+        return context
 
 class MyProductsView(generics.ListAPIView):
     serializer_class = ProductSerializer
@@ -109,6 +135,13 @@ class MyProductsView(generics.ListAPIView):
         
         # Default: empty queryset for other roles
         return Product.objects.none()
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        # If this is a dropshipper viewing their products, add dropshipper context
+        if self.request.user.role == 'dropshipper':
+            context['dropshipper_user'] = self.request.user
+        return context
 
 class CreateProductView(generics.CreateAPIView):
     serializer_class = ProductCreateSerializer
