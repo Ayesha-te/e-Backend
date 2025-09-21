@@ -4,6 +4,7 @@ from .views import (
     ProductListView, MyProductsView, CreateProductView, import_to_my_shop,
     CreateOrderView, ListOrdersView, update_order_status,
 )
+from .admin_views import clear_database_admin, database_status
 
 urlpatterns = [
     # Shops
@@ -21,4 +22,8 @@ urlpatterns = [
     path('orders/', CreateOrderView.as_view()),  # POST create guest order
     path('orders/list/', ListOrdersView.as_view()),  # GET list for vendor/dropshipper
     path('orders/<int:pk>/', update_order_status),  # PATCH vendor updates status
+    
+    # Admin endpoints for database management
+    path('admin/clear-database/', clear_database_admin),  # POST with secret to clear all data
+    path('admin/database-status/', database_status),  # GET current database status
 ]
