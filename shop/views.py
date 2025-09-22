@@ -156,6 +156,21 @@ class CreateProductView(generics.CreateAPIView):
         except Exception as e:
             raise serializers.ValidationError({'detail': 'Failed to create product'})
 
+class UpdateProductView(generics.UpdateAPIView):
+    serializer_class = ProductCreateSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        # Only allow vendors to update their own products
+        return Product.objects.filter(vendor=self.request.user)
+
+class DeleteProductView(generics.DestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        # Only allow vendors to delete their own products
+        return Product.objects.filter(vendor=self.request.user)
+
 # Dropshipper import
 @api_view(['POST'])
 @permission_classes([permissions.IsAuthenticated])

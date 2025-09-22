@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Shop, Product, DropshipImport, Order, OrderItem
+from .models import Shop, Product, ProductImage, DropshipImport, Order, OrderItem
 
 User = get_user_model()
 
@@ -36,15 +36,35 @@ class ShopSerializer(serializers.ModelSerializer):
                 pass
         return None
 
+class ProductImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductImage
+        fields = ['id', 'image_url', 'is_primary', 'order']
+
+    def get_image_url(self, obj):
+        request = self.context.get('request')
+        if obj.image and hasattr(obj.image, 'url'):
+            try:
+                if obj.image.storage.exists(obj.image.name):
+                    url = obj.image.url
+                    return request.build_absolute_uri(url) if request else url
+            except:
+                pass
+        return None
+
 class ProductSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
+    images = ProductImageSerializer(source='product_images', many=True, read_only=True)
+    all_images = serializers.SerializerMethodField()
     shop_name = serializers.SerializerMethodField()
     shop_logo_url = serializers.SerializerMethodField()
     vendor_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
-        fields = ['id', 'title', 'description', 'price', 'image_url', 'category', 'stock', 'is_active', 'shop_name', 'shop_logo_url', 'vendor_name']
+        fields = ['id', 'title', 'description', 'price', 'image_url', 'images', 'all_images', 'category', 'stock', 'is_active', 'shop_name', 'shop_logo_url', 'vendor_name']
 
     def get_image_url(self, obj):
         request = self.context.get('request')
@@ -105,14 +125,56 @@ class ProductSerializer(serializers.ModelSerializer):
             return obj.vendor.company_name or obj.vendor.username
         return None
 
+    def get_all_images(self, obj):
+        """Get all images for this product including the main image"""
+        request = self.context.get('request')
+        images = []
+        
+        # Add main image if exists
+        if obj.image and hasattr(obj.image, 'url'):
+            try:
+                if obj.image.storage.exists(obj.image.name):
+                    url = obj.image.url
+                    images.append({
+                        'id': 'main',
+                        'image_url': request.build_absolute_uri(url) if request else url,
+                        'is_primary': True,
+                        'order': 0
+                    })
+            except:
+                pass
+        
+        # Add additional images
+        for idx, img in enumerate(obj.product_images.all(), start=1):
+            if img.image and hasattr(img.image, 'url'):
+                try:
+                    if img.image.storage.exists(img.image.name):
+                        url = img.image.url
+                        images.append({
+                            'id': img.id,
+                            'image_url': request.build_absolute_uri(url) if request else url,
+                            'is_primary': img.is_primary,
+                            'order': img.order or idx
+                        })
+                except:
+                    pass
+        
+        return sorted(images, key=lambda x: x['order'])
+
 class ProductCreateSerializer(serializers.ModelSerializer):
     # Allow product creation without an image; accept 'file' alias as well
     image = serializers.ImageField(required=False, allow_null=True)
+    additional_images = serializers.ListField(
+        child=serializers.ImageField(),
+        required=False,
+        allow_empty=True,
+        write_only=True
+    )
     is_active = serializers.BooleanField(required=False, default=True)
 
     class Meta:
         model = Product
-        fields = ['title', 'description', 'price', 'image', 'category', 'stock', 'is_active']
+        fields = ['title', 'description', 'price', 'image', 'additional_images', 'category', 'stock', 'is_active']
 
     def to_internal_value(self, data):
         # If client sent 'file' instead of 'image', map it
@@ -121,6 +183,41 @@ class ProductCreateSerializer(serializers.ModelSerializer):
             mutable_data['image'] = mutable_data.get('file')
             data = mutable_data
         return super().to_internal_value(data)
+
+    def create(self, validated_data):
+        additional_images = validated_data.pop('additional_images', [])
+        product = super().create(validated_data)
+        
+        # Create additional product images
+        for idx, image in enumerate(additional_images):
+            ProductImage.objects.create(
+                product=product,
+                image=image,
+                order=idx + 1,
+                is_primary=False
+            )
+        
+        return product
+
+    def update(self, instance, validated_data):
+        additional_images = validated_data.pop('additional_images', None)
+        product = super().update(instance, validated_data)
+        
+        # Handle additional images if provided
+        if additional_images is not None:
+            # Remove existing additional images
+            instance.product_images.all().delete()
+            
+            # Create new additional images
+            for idx, image in enumerate(additional_images):
+                ProductImage.objects.create(
+                    product=instance,
+                    image=image,
+                    order=idx + 1,
+                    is_primary=False
+                )
+        
+        return product
 
 class DropshipImportSerializer(serializers.ModelSerializer):
     class Meta:

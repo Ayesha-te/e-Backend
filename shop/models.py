@@ -32,7 +32,7 @@ class Product(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
-    image = models.ImageField(upload_to='products/', blank=True, null=True)
+    image = models.ImageField(upload_to='products/', blank=True, null=True)  # Keep for backward compatibility
     category = models.CharField(max_length=100, blank=True)
     stock = models.IntegerField(default=0)
     # Timestamps
@@ -41,6 +41,45 @@ class Product(models.Model):
 
     def __str__(self):
         return self.title
+
+    @property
+    def image_url(self):
+        if self.image and hasattr(self.image, 'url'):
+            return self.image.url
+        return None
+
+    @property
+    def all_images(self):
+        """Get all images for this product including the main image"""
+        images = []
+        # Add main image if exists
+        if self.image:
+            images.append({
+                'id': 'main',
+                'image': self.image.url,
+                'is_primary': True
+            })
+        # Add additional images
+        for img in self.product_images.all():
+            images.append({
+                'id': img.id,
+                'image': img.image.url,
+                'is_primary': img.is_primary
+            })
+        return images
+
+class ProductImage(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='product_images')
+    image = models.ImageField(upload_to='products/')
+    is_primary = models.BooleanField(default=False)
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['order', 'created_at']
+
+    def __str__(self):
+        return f"{self.product.title} - Image {self.id}"
 
     @property
     def image_url(self):
